@@ -70,9 +70,20 @@ describe('listSubmissions', () => {
 
     const { rows } = await listSubmissions({ page: 1, per: 1, campaignId })
 
-    expect(rows[0]).toMatchObject({ creatorUsername: username, campaignId })
+    expect(rows[0]).toMatchObject({
+      creatorUsername: username,
+      campaignId,
+      campaignBrand: 'Fixture',
+      campaignCpm: 1500,
+      campaignStatus: 'active',
+      campaignTotalBudget: 1_000_000,
+      campaignRemainingBudget: 1_000_000,
+    })
     expect(rows[0].campaignTitle).toContain('fixture')
+    expect(rows[0].videoUrl).toContain('https://example.test/')
     expect(rows[0].submittedAt).toBeInstanceOf(Date)
+    // Pending rows carry no review timestamp; the detail dialog relies on it.
+    expect(rows[0].reviewedAt).toBeNull()
   })
 
   it('searches creator usernames anywhere in the name, not just the start', async () => {

@@ -13,3 +13,11 @@ const dateTime = new Intl.DateTimeFormat('id-ID', {
 export const formatNumber = (value: number) => number.format(value)
 export const formatRupiah = (value: number) => `Rp${number.format(value)}`
 export const formatDateTime = (value: Date) => dateTime.format(value)
+
+/**
+ * For the database's lowercase enum-ish values in labels. CSS `capitalize` does
+ * the same for a text node, but `<option>` ignores text-transform in some
+ * browsers, so the label has to arrive already capitalised.
+ */
+export const capitalize = (value: string) =>
+  value.charAt(0).toUpperCase() + value.slice(1)

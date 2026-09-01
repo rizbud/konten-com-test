@@ -5,15 +5,29 @@ import { campaigns, creators, submissions } from '@/db/schema'
 
 import type { ListParams } from './params'
 
+/**
+ * Everything the review screen shows about one submission, table and detail
+ * dialog together. The campaign columns ride along on a join that already
+ * happens — a per-row lookup when the dialog opens would be an N+1 waiting to
+ * be written, and the dialog would need a loading state for data the page
+ * already had.
+ */
 export type SubmissionRow = {
   id: number
   creatorUsername: string
-  campaignId: number
-  campaignTitle: string
   platform: string
+  videoUrl: string
   views: number
   status: string
   submittedAt: Date
+  reviewedAt: Date | null
+  campaignId: number
+  campaignTitle: string
+  campaignBrand: string
+  campaignCpm: number
+  campaignStatus: string
+  campaignTotalBudget: number
+  campaignRemainingBudget: number
 }
 
 export type SubmissionList = {
@@ -47,12 +61,19 @@ export async function listSubmissions(params: ListParams): Promise<SubmissionLis
       .select({
         id: submissions.id,
         creatorUsername: creators.username,
-        campaignId: submissions.campaignId,
-        campaignTitle: campaigns.title,
         platform: submissions.platform,
+        videoUrl: submissions.videoUrl,
         views: submissions.views,
         status: submissions.status,
         submittedAt: submissions.submittedAt,
+        reviewedAt: submissions.reviewedAt,
+        campaignId: submissions.campaignId,
+        campaignTitle: campaigns.title,
+        campaignBrand: campaigns.brand,
+        campaignCpm: campaigns.cpm,
+        campaignStatus: campaigns.status,
+        campaignTotalBudget: campaigns.totalBudget,
+        campaignRemainingBudget: campaigns.remainingBudget,
       })
       .from(submissions)
       .innerJoin(creators, eq(creators.id, submissions.creatorId))

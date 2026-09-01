@@ -1,280 +1,206 @@
-# ClipPay — review & approve
+# ClipPay — Review dan Persetujuan Submission
 
-Irisan sisi admin: menampilkan submission, me-review satu per satu, membayar
-creator, dan memotong Remaining Budget campaign.
+ClipPay adalah platform yang membayar creator berdasarkan jumlah penayangan
+video. Proyek ini mengimplementasikan bagian review dan persetujuan submission
+oleh admin:
 
-Yang dikejar lebih dulu adalah **kebenaran uang** dan **keamanan saat approve
-terjadi bersamaan**; sisanya sengaja dibuat sepolos mungkin.
+1. Menampilkan submission yang perlu ditinjau.
+2. Memungkinkan admin menyetujui atau menolak submission.
+3. Membayar creator dan mengurangi budget campaign ketika submission disetujui.
 
-> Rincian implementasi yang lebih panjang ada di [README.en.md](README.en.md)
-> (bahasa Inggris). Istilah domain: [CONTEXT.md](CONTEXT.md). Keputusan yang
-> direkam sebagai ADR: [docs/adr/](docs/adr/).
+> Karena proses ini melibatkan uang sungguhan, prioritas utama proyek adalah
+> ketepatan perhitungan, konsistensi data, serta keamanan terhadap permintaan
+> yang berjalan bersamaan.
 
-## Cara menjalankan
+Istilah domain dijelaskan di [CONTEXT.md](CONTEXT.md). Keputusan arsitektur yang
+lebih spesifik dicatat sebagai [ADR](docs/adr/).
 
-`.env` cukup satu baris:
+## Teknologi
 
-```
+- Next.js 16 App Router dan React 19
+- TypeScript
+- Drizzle ORM dengan PostgreSQL
+- Tailwind CSS v4
+- Vitest
+
+## Cara Menjalankan
+
+Pastikan Docker tersedia, lalu buat file `.env` dengan isi berikut:
+
+```env
 DATABASE_URL=postgresql://clippay:clippay@localhost:5433/clippay
 ```
+
+Jalankan perintah berikut dari direktori proyek:
 
 ```bash
 docker compose up -d
 npm install
-npm run db:setup     # menjalankan schema.sql yang diberikan: tabel + seed 50.000 baris
-npm run db:migrate   # drizzle-kit migrate: index tambahan dari drizzle/
-npm run dev          # http://localhost:3000/review
+npm run db:setup     # Menjalankan schema.sql dan seed 50.000 submission
+npm run db:migrate   # Menjalankan migrasi index tambahan
+npm run dev
 ```
 
-Tidak butuh `psql`: `db:setup` menjalankan `schema.sql` lewat driver `pg`, dan
-`db:migrate` adalah drizzle-kit.
+Setelah server berjalan, buka [http://localhost:3000/review](http://localhost:3000/review).
+
+Perintah pemeriksaan:
 
 ```bash
-npm test        # 57 test, butuh database menyala
+npm test
 npm run lint
 npm run build
 ```
 
-## Yang dikerjakan
+`db:setup` menjalankan `schema.sql` melalui driver PostgreSQL sehingga `psql`
+tidak diperlukan. `db:migrate` hanya menjalankan migrasi yang ditulis secara
+manual untuk index tambahan. `drizzle-kit generate` biasa dan `push` tidak
+digunakan karena tabel awal sudah disediakan oleh `schema.sql`.
 
-| | |
-|---|---|
-| `GET /api/submissions` | pagination, filter `status` / `campaignId` / `creator`, pencarian username, total baris eksak |
-| `POST /api/submissions/:id/approve` | jalur uang: satu transaksi, penjaga budget, tanpa pembayaran dobel |
-| `POST /api/submissions/:id/reject` | separuh lain dari sebuah Review — tanpa uang, penjaga yang sama |
-| `GET /api/creators` | sumber typeahead filter creator, dibatasi 5 |
-| `GET /api/campaigns/:id/summary` | bonus B3, satu kali jalan ke database |
-| `/review` | tabel di server, filter di URL, approve/reject dengan konfirmasi (dari baris atau dari dialog detail) |
+## Fitur yang Diimplementasikan
 
-Bonus yang dikerjakan: **B1** (test perhitungan uang), **B2** (jawaban di bawah),
-**B3** (endpoint summary).
+### Fitur wajib
 
-## Keputusan teknis dan alasannya
+| Fitur | Keterangan |
+| --- | --- |
+| `GET /api/submissions` | Pagination, filter status, filter campaign, pencarian username creator, dan total jumlah baris |
+| `POST /api/submissions/:id/approve` | Menghitung earning, mengurangi budget, mencatat earning, dan mengubah status secara atomik |
+| `POST /api/submissions/:id/reject` | Mengubah submission pending menjadi rejected tanpa memindahkan uang |
+| `/review` | Tabel submission, filter, pagination, approve/reject, serta state loading, kosong, dan error |
 
-### 1. Perhitungan uang: integer, satu `floor` per nilai
+### Bonus
 
+- **B1:** Test untuk fungsi perhitungan uang.
+- **B2:** Jawaban tentang penurunan jumlah views setelah approval, tersedia di
+  bagian [Jawaban B2](#jawaban-b2--views-turun-setelah-approval).
+- **B3:** `GET /api/campaigns/:id/summary` untuk ringkasan campaign.
+- `GET /api/creators` sebagai sumber saran username creator pada filter.
+
+## Keputusan Teknis
+
+### 1. Perhitungan uang menggunakan bilangan bulat
+
+Semua nilai uang dan jumlah views diproses sebagai bilangan bulat. Tidak ada
+operasi floating point dalam perhitungan nominal.
+
+```text
+earning_kotor = floor(views × cpm / 1000)
+earning_net   = floor(earning_kotor × 80 / 100)
+fee_platform  = earning_kotor - earning_net
 ```
-gross = floor(views * cpm / 1000)
-net   = floor(gross * 80 / 100)
-fee   = gross - net
-```
 
-`fee` diambil sebagai **sisa**, bukan angka yang dibulatkan sendiri, supaya
-`gross = net + fee` selalu benar. Tidak ada float yang menyentuh nominal.
+Dengan demikian, `earning_kotor = earning_net + fee_platform` selalu terpenuhi.
+Contoh dari soal: 12.345 views dengan CPM Rp1.500 menghasilkan earning kotor
+Rp18.517 dan earning net Rp14.813.
 
-`net` ditulis `floor(gross * 80 / 100)` karena itu yang cocok dengan contoh di
-soal: 12.345 views @ CPM 1500 → gross 18.517, net **14.813**. Kalau ditulis
-`gross - floor(gross * 20 / 100)` hasilnya 14.814. Dua-duanya pembulatan yang
-bisa dipertahankan, tapi hanya satu yang sesuai soal — dan
-[`money.test.ts`](src/lib/money.test.ts) mengunci perbedaan itu supaya tidak
-bergeser tanpa sengaja di kemudian hari.
+Test perhitungan mencakup contoh acuan dari soal, nilai views nol, batas
+pembulatan, serta rekonsiliasi antara earning kotor, earning net, dan fee.
 
-**Jawaban B1 — test yang menurut saya paling penting**, berurutan: contoh acuan
-dari soal, rekonsiliasi `gross = net + fee` untuk semua CPM di seed, arah
-pembulatan tepat di batas, dan `views = 0`. Yang paling mungkin menangkap regresi
-nyata adalah test rekonsiliasi, karena itulah invarian yang harus dipenuhi tabel
-`earnings` supaya pembukuannya seimbang.
+### 2. Approval aman terhadap klik ganda dan konkurensi
 
-### 2. Approve: satu transaksi, semua penjaga berupa UPDATE bersyarat
+Proses approval dilakukan dalam satu transaksi database. Submission terlebih
+dahulu diubah menggunakan kondisi `status = 'pending'`. Hanya request yang
+berhasil mengubah baris tersebut yang dapat melanjutkan proses pembayaran.
 
-Row lock Postgres yang menentukan siapa menang, bukan pengecekan di aplikasi:
+Budget campaign kemudian dikurangi dengan kondisi
+`remaining_budget >= earning_kotor`. Jika budget tidak cukup, transaksi
+dibatalkan seluruhnya. Sistem tidak pernah membayar sebagian dan tidak pernah
+membiarkan budget menjadi negatif.
 
-1. `update submissions set status='approved', reviewed_at=now() where id=? and status='pending' returning views, creator_id, campaign_id`
-   → **penjaga pembayaran dobel.** Pemanggil kedua menunggu di baris yang sama,
-   lalu melihat statusnya sudah bukan `pending` dan meng-update nol baris.
-2. Baca `cpm` di transaksi yang sama, hitung dari `views` hasil `RETURNING`
-   langkah 1 — jadi nominalnya dihitung dari baris saat baris itu di-lock.
-3. `update campaigns set remaining_budget = remaining_budget - gross where id=? and remaining_budget >= gross`
-   → nol baris berarti budget tidak cukup. Rollback; tidak pernah membayar
-   sebagian, dan budget tidak pernah minus.
-4. Insert Earning dengan `views_at_approval` dari snapshot langkah 1.
+Selain penjagaan melalui transaksi, terdapat unique index pada
+`earnings.submission_id` sebagai lapisan perlindungan tambahan terhadap
+pembayaran ganda.
 
-Ditambah `create unique index on earnings (submission_id)` sebagai penjaga kedua
-di level database. Redundan dengan sengaja: ini uang sungguhan.
+Perilaku endpoint:
 
-Status code: `404` submission tidak ada · `409` sudah di-review · `422` Zero
-Earning atau budget tidak cukup · `400` id tidak valid. UI membedakan
-pesannya, karena "sudah di-review" dan "budget habis" menuntut tindakan berbeda.
+- `400` jika ID tidak valid.
+- `404` jika submission tidak ditemukan.
+- `409` jika submission sudah direview.
+- `422` jika earning bernilai nol atau budget tidak mencukupi.
 
-**Diuji terhadap database sungguhan**, bukan driver yang di-mock:
+### 3. Listing dilakukan di sisi database
 
-- 10 approve bersamaan atas satu submission → tepat 1 sukses, 1 baris `earnings`,
-  budget berkurang tepat sekali;
-- 8 approve bersamaan atas budget yang cukup untuk 3 → tepat 3 pembayaran, budget
-  tepat nol, 5 submission tetap `pending`;
-- gross tepat sama dengan Remaining Budget → berhasil; lebih 1 rupiah → 422 dan
-  tidak ada yang berubah;
-- approve berlomba dengan reject → tepat satu yang menang, dan status barisnya
-  selalu konsisten dengan pembukuan.
+Pagination menggunakan `LIMIT` dan `OFFSET` di database. Data campaign dan
+creator diambil melalui join dalam query yang sama sehingga tidak terjadi
+masalah N+1. Query isi halaman dan query `count(*)` menggunakan kondisi filter
+yang sama dan dijalankan secara bersamaan.
 
-### 3. Reject: satu UPDATE bersyarat, tanpa transaksi
+Urutan data menggunakan `submitted_at DESC, id DESC`. `id` menjadi pemecah seri
+agar pagination tetap stabil ketika beberapa submission memiliki waktu submit
+yang sama.
 
-Tidak ada uang yang berpindah, jadi tidak ada transaksi yang perlu dibuka — satu
-`update … where id=? and status='pending'` sudah atomik dengan sendirinya, dengan
-kondisi yang sama seperti approve. Efeknya: submission yang sudah di-approve
-tidak bisa di-reject di belakang Earning-nya, dan yang sudah di-reject tidak bisa
-dibayar kemudian ([ADR-0005](docs/adr/0005-rejection-is-the-other-half-of-a-review.md)).
+Parameter query divalidasi di batas route. Input yang tidak valid menghasilkan
+respons `400`, bukan error `500` dari driver database.
 
-### 4. Query listing: pagination di database, satu where-clause
+### 4. Index tambahan
 
-Satu statement untuk isi halaman dan satu `count(*)` untuk totalnya, dibangun
-dari where-clause yang sama, dijalankan dalam satu `Promise.all`. `limit`/`offset`
-dari `page`/`per` yang sudah divalidasi (`per` dibatasi 100) — tidak ada data yang
-diambil semua lalu dipotong di aplikasi. `creators` dan `campaigns` di-join di
-statement yang sama, jadi tidak ada N+1.
+Index tambahan ditulis sebagai SQL manual di [drizzle/](drizzle/) agar tetap
+mudah ditinjau:
 
-Urutannya `submitted_at desc, id desc`. Pemecah seri itu bukan hiasan:
-`submitted_at` tidak unik di seed, dan tanpa `id` halaman saling tumpang tindih.
+| Index | Kegunaan |
+| --- | --- |
+| `submissions (status, submitted_at DESC, id DESC)` | Listing default |
+| `submissions (campaign_id, status, submitted_at DESC, id DESC)` | Listing berdasarkan campaign |
+| `submissions (creator_id, status, submitted_at DESC, id DESC)` | Listing berdasarkan creator |
+| Unique `earnings (submission_id)` | Perlindungan tambahan terhadap pembayaran ganda |
+| GIN pada `lower(creators.username)` | Pencarian username substring |
 
-Query param divalidasi di batas route; input tidak valid → **400 dengan semua
-masalahnya sekaligus**, bukan 500 dari driver. Validasinya ditulis tangan, bukan
-zod: enam parameter tidak sebanding dengan satu dependency baru.
+Index tunggal pada `status` dan `campaign_id` dari seed tidak dipertahankan
+karena kolom tersebut sudah menjadi awalan index komposit yang digunakan query.
 
-### 5. Index yang ditambahkan
+### 5. Pemisahan server component dan client component
 
-Semuanya SQL tulis-tangan di [`drizzle/`](drizzle/), dijalankan
-`npm run db:migrate`. drizzle-kit dipakai **hanya** untuk `migrate` dan
-`generate --custom` — `generate` biasa atau `push` akan mencoba membuat ulang
-tabel yang sudah diberikan `schema.sql`.
+Halaman `/review` mengambil data melalui modul query yang sama dengan route
+handler API. Hal ini menghindari request HTTP ke server sendiri dan memastikan
+logika query hanya memiliki satu sumber.
 
-| Index | Query yang dilayani |
-|---|---|
-| `submissions (status, submitted_at desc, id desc)` | listing default. `EXPLAIN` menunjukkan index scan langsung ke LIMIT, **tanpa sort** |
-| `submissions (campaign_id, status, submitted_at desc, id desc)` | listing dengan filter campaign; `campaign_id` di depan karena lebih selektif |
-| `submissions (creator_id, status, submitted_at desc, id desc)` | listing untuk satu creator. `schema.sql` sama sekali tidak punya index di `creator_id` |
-| `earnings (submission_id)` unique | penjaga pembayaran dobel kedua |
-| `creators using gin (lower(username) gin_trgm_ops)` | pencarian substring username |
+Server component digunakan untuk pengambilan data awal. Client component hanya
+digunakan untuk interaksi seperti menerapkan filter, pagination, approve, dan
+reject. Filter disimpan di URL agar dapat dipertahankan saat halaman dimuat
+ulang atau dibagikan.
 
-Dua index dari seed dibuang — `submissions (status)` dan
-`submissions (campaign_id)` — karena keduanya prefiks kolom depan dari komposit di
-atas, jadi sekarang hanya membebani kecepatan tulis.
+## Jawaban B2 — Views Turun Setelah Approval
 
-Filter creator punya **dua mode**, dan itu disengaja:
+Keputusan yang digunakan adalah **earning tetap berlaku setelah approval**.
+Approval dianggap sebagai keputusan pembayaran final pada jumlah views yang
+tercatat saat itu. Nilai `views_at_approval` disimpan agar dasar perhitungan
+setiap pembayaran dapat diaudit.
 
-- **`creator=creator_190`** — cocok persis pada satu username, lewat unique index
-  `creators_username_key`. Ini yang dikirim begitu sebuah nama dipilih dari
-  daftar saran. Yang dipakai username, bukan id, supaya URL-nya tetap terbaca dan
-  kotak filternya bisa menampilkan siapa yang sedang difilter langsung dari URL —
-  dengan id, nama itu harus diambil ulang setiap kali halaman dimuat.
-- **`q=creator_190`** — pencarian substring, untuk saat belum ada nama yang
-  dipilih.
+Bagi creator, keputusan ini membuat pendapatan menjadi pasti dan mencegah
+creator menanggung risiko akibat pembersihan views palsu yang dilakukan oleh
+platform video. Menarik kembali pembayaran secara retroaktif juga dapat
+merugikan creator untuk sesuatu yang berada di luar kendalinya.
 
-Pembedaannya penting: `q=creator_190` juga cocok dengan `creator_1900` sampai
-`creator_1909`, jadi memilih satu creator dari daftar tetapi memfilter dengan `q`
-akan mengembalikan 278 baris milik 11 creator, bukan 16 baris milik satu orang.
-Mengetik lagi setelah memilih akan membatalkan pilihannya, karena teksnya sudah
-tidak lagi menyebut satu orang tertentu.
+Bagi brand, konsekuensinya adalah brand menanggung risiko apabila jumlah views
+turun setelah pembayaran. Risiko tersebut dapat dikurangi dengan:
 
-Pencarian substring-nya sendiri ditulis `lower(username) like '%creator_1%'`,
-dengan `%`, `_`, `\` dari input pengguna di-escape supaya mencari `%` tidak cocok
-semuanya. `%` di depan tidak bisa dilayani b-tree, jadi index-nya `pg_trgm`; hasil
-`EXPLAIN ANALYZE`-nya bitmap index scan, 0,2 ms. `ilike` lebih enak dibaca tapi
-tidak bisa memakai index itu — ekspresi yang di-index `lower(username)`, jadi
-predikatnya harus ditulis sama.
+- menunggu beberapa hari sebelum melakukan approval agar views lebih stabil;
+- memasukkan cadangan penurunan views ke dalam perencanaan budget atau CPM; dan
+- menetapkan batas earning per submission.
 
-### 6. Halaman `/review` memanggil modul query, bukan API-nya sendiri
+Jika produk mengharuskan jumlah views dapat dikoreksi, pendekatan yang lebih
+tepat adalah mengubah alur bisnis: earning dicatat sebagai akrual terlebih
+dahulu, lalu dicairkan setelah periode pengendapan. Pendekatan tersebut
+memerlukan perubahan skema dan keputusan produk di luar cakupan take-home ini.
 
-Route handler dan page memakai satu fungsi `listSubmissions` yang sama: handler
-hanya validasi + serialisasi, page memanggilnya langsung. Jadi tidak ada request
-loopback dan hanya ada satu tempat query listing bisa salah
-([ADR-0003](docs/adr/0003-one-query-module-not-a-self-http-call.md)). Perlu
-diketahui sebelum mencari `fetch` di page yang memang tidak ada.
+## Catatan Implementasi
 
-Server component mengambil data; client component hanya untuk interaksi. Dua efek
-samping — menerapkan filter dan mengirim review — dimiliki oleh **list**, bukan
-oleh tombol atau baris yang memicunya, jadi hanya ada satu tempat yang tahu arti
-sebuah perubahan filter dan arti setiap status code. Tanpa custom hook: masing-
-masing dipakai di satu tempat saja.
+- Seed awal menempatkan seluruh 50.000 submission dalam status `pending`.
+  Karena itu, filter `approved` atau `rejected` dapat menampilkan tabel kosong
+  pada database yang baru diinisialisasi.
+- Data `approved` lama pada seed tidak memiliki earning dan tidak mengurangi
+  budget. Data tersebut diperlakukan sebagai riwayat baca-saja.
+- Nilai `bigint` dibaca sebagai `number` karena nominal proyek masih berada dalam
+  batas aman JavaScript. Hasil agregasi yang tetap bertipe `bigint` dikonversi
+  secara eksplisit sebelum dikirim sebagai JSON.
 
-Tidak ada yang difilter sampai **Apply filter** ditekan, jadi mengubah status dan
-campaign sekaligus hanya sekali jalan ke server dan input setengah jadi tidak
-pernah men-query 50.000 baris. State filter tinggal di URL supaya bertahan saat
-reload dan bisa dikirim ke orang lain.
+## Keterbatasan dan Pekerjaan Lanjutan
 
-Empat state ditangani: loading (skeleton `Suspense`), kosong (membedakan "tidak
-ada yang cocok" dari "halaman melewati baris terakhir"), filter tidak valid
-(pesan validasi dari server), dan error (`error.tsx` untuk database yang tidak
-menjawab).
-
-### 7. Keputusan yang direkam sebagai ADR
-
-- [ADR-0001](docs/adr/0001-budget-is-the-only-approval-gate.md) — **budget satu-satunya gerbang**: campaign `paused`/`closed` tetap bisa di-approve, karena soal hanya menyebut budget sebagai alasan penolakan.
-- [ADR-0002](docs/adr/0002-zero-earning-submissions-are-not-approvable.md) — **Zero Earning tidak bisa di-approve**: "approve" berarti "bayar", dan tidak ada yang dibayar.
-- [ADR-0003](docs/adr/0003-one-query-module-not-a-self-http-call.md) — satu modul query, bukan self-HTTP.
-- [ADR-0004](docs/adr/0004-approval-is-final.md) — **approval final**, dasar jawaban B2.
-- [ADR-0005](docs/adr/0005-rejection-is-the-other-half-of-a-review.md) — reject dibangun meski tidak diminta soal.
-
-## Jawaban B2 — views turun setelah di-approve
-
-**Tidak ada yang terjadi. Earning-nya tetap berlaku.**
-
-Approve membayar creator saat itu juga; tidak ada tahap pembayaran berikutnya
-untuk dikoreksi. Video yang di-approve pada 100.000 views lalu turun ke 60.000
-tetap memegang Earning-nya, dan `views_at_approval` mencatat 100.000 yang menjadi
-dasar perhitungannya — jadi dasar setiap pembayaran lama tetap bisa diaudit
-walaupun angka live-nya sudah tidak cocok.
-
-**Konsekuensi bagi creator:** pendapatannya final begitu admin menekan approve.
-Alternatifnya — menarik selisihnya kembali — membuat saldo creator menjadi fungsi
-dari operasi pembersihan views palsu platform: sesuatu yang tidak mereka
-kendalikan dan tidak bisa mereka perkirakan. Menagih utang secara retroaktif ke
-orang yang sudah dibayar adalah cara tercepat kehilangan sisi suplai sebuah
-marketplace dua sisi.
-
-**Konsekuensi bagi brand:** mereka menanggung penurunan views atas pekerjaan yang
-sudah dibayar. Itu biaya nyata, dan tuasnya ada di sisi approval — bukan di sisi
-pembatalan:
-
-- **approve setelah views mengendap** — masa tunggu (approve di hari ke-7, bukan
-  hari pertama) menghilangkan sebagian besar penurunan, karena pembersihan
-  terjadi di awal;
-- **masukkan ke harga** — cadangan penurunan di dalam budget campaign, atau CPM
-  yang sudah mengasumsikan beberapa persen pembersihan;
-- **batas per submission**, supaya satu video viral tidak mengambil porsi budget
-  yang tidak proporsional atas views yang belum tentu bertahan.
-
-Kalau brand benar-benar butuh angka yang terkoreksi, bentuk yang jujur bukan
-pembatalan melainkan **tahap kedua**: `earnings` menjadi akrual dan pencairan
-terjadi setelah masa pengendapan. Itu perubahan skema dan keputusan produk yang
-berbeda, jadi disebut di sini alih-alih dikerjakan setengah.
-
-## Catatan yang perlu diketahui
-
-- **Seed menempatkan semua 50.000 submission di `pending`** pada Postgres 16.
-  Statusnya dipilih di `cross join lateral` yang tidak mereferensikan baris luar,
-  jadi planner mengevaluasinya sekali. `schema.sql` adalah pemberian dan tidak
-  diubah; test membangun fixture-nya sendiri, jadi tetap mencakup baris
-  `approved` dan `rejected`. Memfilter `/review` dengan `approved` pada database
-  yang baru di-seed menampilkan tabel kosong karena ini, bukan karena filter
-  rusak.
-- **Legacy Approval**: baris `approved` dari seed memang tidak punya Earning dan
-  tidak memotong budget, sesuai catatan di `schema.sql`. Riwayat baca-saja.
-- **Uang bertipe `bigint` dibaca sebagai number** (`mode: 'number'`), eksak
-  sampai 2^53 rupiah. `mode: 'bigint'` akan memaksa `BigInt` melewati setiap
-  perhitungan dan batas JSON demi plafon yang tidak akan tercapai. Satu-satunya
-  `bigint` sungguhan yang bertahan adalah `sum()` di campaign summary, dan itu
-  dikonversi secara eksplisit.
-- **Drizzle membuang kualifier tabel** untuk objek kolom di dalam template `sql`
-  pada select list: `${submissions.campaignId} = ${campaigns.id}` ter-render
-  `"campaign_id" = "id"` dan menghitung baris yang salah tanpa error. Subquery di
-  campaign summary karena itu ditulis sebagai SQL literal, dan ada test yang
-  mengunci angkanya.
-
-## Yang dipotong, dan apa selanjutnya
-
-- **Tidak ada test komponen.** React Testing Library tidak dipasang; waktunya
-  dialokasikan ke uang dan transaksinya, yang merupakan risiko yang dinilai.
-  Halamannya diverifikasi dengan menjalankannya di browser sungguhan — approve
-  sebuah baris, cek baris `earnings` dan Remaining Budget-nya, lalu cek pesan
-  409/422.
-- **`count(*)` eksak di setiap listing**, dan itu yang pertama melambat jauh di
-  atas 50.000 baris. Peningkatannya: estimasi dari `pg_class.reltuples` untuk
-  hitungan tanpa filter, atau cursor keyset tanpa offset
-  (`where (submitted_at, id) < (?, ?)`) yang sudah disiapkan oleh urutannya.
-- **Offset yang dalam** tetap menyusuri entri index; solusinya sama, pagination
-  keyset.
-- **Tanpa autentikasi** — hanya ada satu aktor di irisan ini dan soal tidak
-  memintanya.
-- **Reject tanpa alasan**, karena skemanya tidak punya tempat menyimpannya.
-- **Tanpa review massal** dan **tanpa halaman untuk endpoint summary** (B3 baru
-  berupa JSON).
+- Belum ada test komponen dengan React Testing Library. Waktu lebih banyak
+  dialokasikan untuk menguji perhitungan uang dan transaksi konkurensi.
+- Listing masih menggunakan `count(*)` eksak dan offset pagination. Untuk data
+  yang jauh lebih besar, estimasi jumlah baris atau keyset pagination dapat
+  dipertimbangkan.
+- Autentikasi belum diterapkan karena tidak termasuk dalam soal.
+- Reject belum memiliki alasan karena skema yang disediakan tidak menyediakan
+  kolom untuk menyimpannya.
+- Belum ada review massal dan belum ada halaman UI khusus untuk endpoint summary.

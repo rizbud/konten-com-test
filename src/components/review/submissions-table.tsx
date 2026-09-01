@@ -7,37 +7,37 @@ import { formatRupiah } from '@/lib/format'
 import type { SubmissionRow as Submission } from '@/lib/submissions/list'
 
 import { Th } from '../ui'
-import { SubmissionRow, type ApprovalState } from './submission-row'
+import { SubmissionRow, type ReviewAction, type RowState } from './submission-row'
 
-type ApproveResponse = {
+type ReviewResponse = {
   error?: string
   earning?: { net: number }
 }
 
 /**
- * The list owns the approve call for every row in it. One place knows the
- * endpoint, how to read its response, and what to do with each status code; the
- * rows report an id and render the state they are handed.
+ * The list owns the review call for every row in it. One place knows the two
+ * endpoints, how to read their responses, and what each status code means; the
+ * rows report an id and an action and render the state they are handed.
  *
  * No custom hook: this is one piece of state and one function used in one place,
- * and a `useApprovals` wrapper would only move the same lines behind a name.
+ * and a `useReviews` wrapper would only move the same lines behind a name.
  */
 export function SubmissionsTable({ rows }: { rows: Submission[] }) {
   const router = useRouter()
-  const [states, setStates] = useState<Record<number, ApprovalState>>({})
+  const [states, setStates] = useState<Record<number, RowState>>({})
   const [isRefreshing, startTransition] = useTransition()
 
-  const setState = (submissionId: number, state: ApprovalState) =>
+  const setState = (submissionId: number, state: RowState) =>
     setStates((current) => ({ ...current, [submissionId]: state }))
 
-  async function approve(submissionId: number) {
-    setState(submissionId, { kind: 'sending' })
+  async function review(submissionId: number, action: ReviewAction) {
+    setState(submissionId, { kind: 'sending', action })
 
     try {
-      const response = await fetch(`/api/submissions/${submissionId}/approve`, {
+      const response = await fetch(`/api/submissions/${submissionId}/${action}`, {
         method: 'POST',
       })
-      const body: ApproveResponse = await response.json()
+      const body: ReviewResponse = await response.json()
 
       if (!response.ok) {
         setState(submissionId, {
@@ -51,13 +51,16 @@ export function SubmissionsTable({ rows }: { rows: Submission[] }) {
 
       setState(submissionId, {
         kind: 'done',
-        message: `Paid ${formatRupiah(body.earning?.net ?? 0)}`,
+        message:
+          action === 'approve'
+            ? `Paid ${formatRupiah(body.earning?.net ?? 0)}`
+            : 'Rejected',
       })
       startTransition(() => router.refresh())
     } catch {
       setState(submissionId, {
         kind: 'error',
-        message: 'Network error — nothing was approved.',
+        message: 'Network error — nothing was changed.',
       })
     }
   }
@@ -82,7 +85,7 @@ export function SubmissionsTable({ rows }: { rows: Submission[] }) {
               key={submission.id}
               submission={submission}
               state={states[submission.id] ?? IDLE}
-              onApprove={approve}
+              onReview={review}
               disabled={isRefreshing}
             />
           ))}
@@ -92,4 +95,4 @@ export function SubmissionsTable({ rows }: { rows: Submission[] }) {
   )
 }
 
-const IDLE: ApprovalState = { kind: 'idle' }
+const IDLE: RowState = { kind: 'idle' }

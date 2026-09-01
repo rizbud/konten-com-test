@@ -1,35 +1,40 @@
 import { formatDateTime, formatNumber } from '@/lib/format'
 import type { SubmissionRow as Submission } from '@/lib/submissions/list'
 
-import { DANGER, MUTED, StatusBadge, SUCCESS, Td } from '../ui'
+import { CLICKABLE, DANGER, MUTED, StatusBadge, SUCCESS, Td } from '../ui'
 
-export type ApprovalState =
+export type ReviewAction = 'approve' | 'reject'
+
+export type RowState =
   | { kind: 'idle' }
-  | { kind: 'sending' }
+  | { kind: 'sending'; action: ReviewAction }
   | { kind: 'error'; message: string }
   | { kind: 'done'; message: string }
 
 /**
- * Presentational. It knows how to draw one submission and which of the four
- * approval states it is in; it does not know that approving is an HTTP call.
- * The id it reports back is the only thing it says about the outside world.
+ * Presentational. It knows how to draw one submission and which state its review
+ * is in; it does not know that reviewing is an HTTP call. The id it reports back
+ * is the only thing it says about the outside world.
  */
 export function SubmissionRow({
   submission,
   state,
-  onApprove,
+  onReview,
   disabled,
 }: {
   submission: Submission
-  state: ApprovalState
-  onApprove: (submissionId: number) => void
+  state: RowState
+  onReview: (submissionId: number, action: ReviewAction) => void
   disabled: boolean
 }) {
+  const sending = state.kind === 'sending'
+  const busy = disabled || sending
+
   return (
     <tr>
       <Td className="font-medium">{submission.creatorUsername}</Td>
       <Td>{submission.campaignTitle}</Td>
-      <Td className={MUTED}>{submission.platform}</Td>
+      <Td className={`capitalize ${MUTED}`}>{submission.platform}</Td>
       <Td className="text-right tabular-nums">{formatNumber(submission.views)}</Td>
       <Td className={`whitespace-nowrap ${MUTED}`}>
         {formatDateTime(submission.submittedAt)}
@@ -51,11 +56,19 @@ export function SubmissionRow({
             ) : null}
             <button
               type="button"
-              onClick={() => onApprove(submission.id)}
-              disabled={disabled || state.kind === 'sending'}
-              className="h-8 shrink-0 rounded-md bg-emerald-700 px-3 text-sm font-medium text-white hover:bg-emerald-600 disabled:opacity-60"
+              onClick={() => onReview(submission.id, 'approve')}
+              disabled={busy}
+              className={`h-8 shrink-0 rounded-md bg-emerald-700 px-3 text-sm font-medium text-white hover:bg-emerald-600 disabled:opacity-60 ${CLICKABLE}`}
             >
-              {state.kind === 'sending' ? 'Approving…' : 'Approve'}
+              {sending && state.action === 'approve' ? 'Approving…' : 'Approve'}
+            </button>
+            <button
+              type="button"
+              onClick={() => onReview(submission.id, 'reject')}
+              disabled={busy}
+              className={`h-8 shrink-0 rounded-md border border-zinc-300 px-3 text-sm font-medium hover:bg-zinc-100 disabled:opacity-60 dark:border-zinc-600 dark:hover:bg-zinc-800 ${CLICKABLE}`}
+            >
+              {sending && state.action === 'reject' ? 'Rejecting…' : 'Reject'}
             </button>
           </div>
         )}

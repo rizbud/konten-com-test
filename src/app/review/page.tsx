@@ -34,7 +34,9 @@ export default async function ReviewPage({ searchParams }: PageProps<'/review'>)
       </p>
 
       <div className="mt-6">
-        <ReviewFilters campaigns={campaignOptions} />
+        {/* Keyed on the query so a navigation resets the filter draft to the
+            URL it landed on, instead of an effect syncing the two. */}
+        <ReviewFilters key={query.toString()} campaigns={campaignOptions} />
       </div>
 
       {parsed.ok ? (

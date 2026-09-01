@@ -2,7 +2,7 @@
 
 import { useId, useMemo, useState } from 'react'
 
-import { CONTROL, MUTED } from '../ui'
+import { CONTROL, MUTED, Popup, PopupNote, PopupOption } from '../ui'
 
 export type CampaignOption = { id: number; title: string }
 
@@ -10,12 +10,10 @@ const ALL = 'All campaigns'
 
 /**
  * Presentational: it owns the typing and open/closed state of its own popup and
- * nothing else. Which campaign is selected is the caller's business — see
- * ReviewFilters, which is where the URL gets written.
+ * nothing else. Which campaign is selected is the caller's business.
  *
- * A native <select> cannot be typed into, and eight campaigns is only eight
- * today. This is a plain filtered listbox rather than a combobox library: click
- * to pick, Enter takes the first match, Escape closes.
+ * Filtering is local because the eight campaigns already arrive with the page —
+ * unlike the creator picker, there is nothing to fetch.
  */
 export function CampaignPicker({
   campaigns,
@@ -30,12 +28,12 @@ export function CampaignPicker({
   const [open, setOpen] = useState(false)
   const [typed, setTyped] = useState('')
 
-  const selectedTitle = campaigns.find((c) => c.id === value)?.title ?? ''
+  const selectedTitle = campaigns.find((campaign) => campaign.id === value)?.title ?? ''
 
   const matches = useMemo(() => {
     const needle = typed.trim().toLowerCase()
     if (!needle) return campaigns
-    return campaigns.filter((c) => c.title.toLowerCase().includes(needle))
+    return campaigns.filter((campaign) => campaign.title.toLowerCase().includes(needle))
   }, [campaigns, typed])
 
   function close() {
@@ -72,6 +70,7 @@ export function CampaignPicker({
         onKeyDown={(event) => {
           if (event.key === 'Escape') close()
           if (event.key === 'Enter') {
+            // Enter would otherwise submit the form before the pick lands.
             event.preventDefault()
             if (matches.length > 0) pick(matches[0].id)
           }
@@ -79,54 +78,24 @@ export function CampaignPicker({
       />
 
       {open ? (
-        <ul
-          id={listboxId}
-          role="listbox"
-          className="absolute z-10 mt-1 max-h-64 w-72 overflow-y-auto rounded-md border border-zinc-300 bg-white py-1 shadow-lg dark:border-zinc-600 dark:bg-zinc-900"
-        >
-          <Option selected={value === null} onSelect={() => pick(null)}>
+        <Popup id={listboxId}>
+          <PopupOption selected={value === null} onSelect={() => pick(null)}>
             <span className={MUTED}>{ALL}</span>
-          </Option>
+          </PopupOption>
 
           {matches.map((campaign) => (
-            <Option
+            <PopupOption
               key={campaign.id}
               selected={campaign.id === value}
               onSelect={() => pick(campaign.id)}
             >
               {campaign.title}
-            </Option>
+            </PopupOption>
           ))}
 
-          {matches.length === 0 ? (
-            <li className={`px-3 py-2 text-sm ${MUTED}`}>No campaign matches.</li>
-          ) : null}
-        </ul>
+          {matches.length === 0 ? <PopupNote>No campaign matches.</PopupNote> : null}
+        </Popup>
       ) : null}
     </div>
-  )
-}
-
-function Option({
-  selected,
-  onSelect,
-  children,
-}: {
-  selected: boolean
-  onSelect: () => void
-  children: React.ReactNode
-}) {
-  return (
-    <li role="option" aria-selected={selected}>
-      <button
-        type="button"
-        onClick={onSelect}
-        className={`w-full px-3 py-2 text-left text-sm hover:bg-zinc-100 dark:hover:bg-zinc-800 ${
-          selected ? 'font-semibold' : ''
-        }`}
-      >
-        {children}
-      </button>
-    </li>
   )
 }

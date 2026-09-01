@@ -16,9 +16,9 @@ No commit.
 
 ## 1. Dependencies and config
 
-Add `drizzle-orm`, `pg`, `@types/pg`, `vitest`, `dotenv`. No `drizzle-kit` — we
-never generate migrations against the provided schema. No React Testing Library
-yet; nothing in the chosen test scope needs it.
+Add `drizzle-orm`, `pg`, `@types/pg`, `vitest`. `drizzle-kit` too, but only for
+`migrate` and `generate --custom` — never a generated diff against the provided
+schema. No React Testing Library yet; nothing in the chosen test scope needs it.
 
 `.env` with `DATABASE_URL`, `test` script in package.json, `vitest.config.ts`
 (node environment, loads `.env`).

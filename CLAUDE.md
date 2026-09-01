@@ -15,7 +15,7 @@ Domain language: [CONTEXT.md](CONTEXT.md). Decisions already made:
    `campaigns.remaining_budget`, insert into `earnings`, flip status.
    Budget must never go negative; no double payment; safe under double-click and
    two concurrent admins.
-3. `/review` page — table, filters, pagination, per-row Approve, with
+3. `/review` page — table, filters, pagination, per-row Approve and Reject, with
    loading / empty / error states handled.
 
 Bonus (optional, only if the required part is clean): money-calc tests,
@@ -38,21 +38,19 @@ Code lives in `src/`, imported as `@/*`. Route handlers in
 Server components for data fetching, client components only for interactivity.
 Drizzle is used against the **existing** `schema.sql` — model it in
 `src/db/schema.ts` and do not generate migrations that recreate those tables.
-New indexes go in a separate small SQL migration file so they are reviewable.
+New indexes go in a hand-written `drizzle-kit generate --custom` migration under
+`drizzle/` so they stay reviewable SQL. Never run plain `drizzle-kit generate` or
+`push` — both would try to recreate the given tables.
 
 ## Setup
 
-```bash
-docker compose up -d
-psql "postgresql://clippay:clippay@localhost:5433/clippay" -f schema.sql
-```
-
 `DATABASE_URL=postgresql://clippay:clippay@localhost:5433/clippay` in `.env`.
 
-Scaffolded by `create-next-app`; Drizzle, `pg`, and Vitest are not installed
-yet — add them when the first code needs them, and add the `test` script then.
-
 ```bash
+docker compose up -d
+npm install
+npm run db:setup     # replays the given schema.sql, no psql needed
+npm run db:migrate   # drizzle-kit migrate: our own indexes
 npm run dev
 npm test
 npm run lint

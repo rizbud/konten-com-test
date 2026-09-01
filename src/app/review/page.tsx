@@ -26,7 +26,7 @@ export default async function ReviewPage({ searchParams }: PageProps<'/review'>)
     .orderBy(asc(campaigns.title))
 
   return (
-    <main className="mx-auto w-full max-w-6xl px-6 py-10">
+    <main className="mx-auto w-full max-w-[96rem] px-4 py-8">
       <h1 className="text-2xl font-semibold tracking-tight">Review submissions</h1>
       <p className={`mt-1 text-sm ${MUTED}`}>
         Approving pays the creator immediately and spends the campaign&rsquo;s remaining

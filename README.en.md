@@ -46,7 +46,7 @@ npm run build
 | `POST /api/submissions/:id/approve` | the money path: one transaction, budget guard, no double pay |
 | `POST /api/submissions/:id/reject` | the other half of a review — no money, same 409 guard |
 | `GET /api/creators` | typeahead source for the creator filter, capped at 5 |
-| `GET /api/campaigns/:id/summary` | bonus B3: one round trip, two scans |
+| `GET /api/campaigns/:id/summary` | bonus B3: one round trip, two scans, surfaced on `/review` |
 | `/review` | server-rendered table, URL filter state, per-row approve and reject behind a confirmation, detail dialog |
 
 ### Where things live
@@ -291,6 +291,17 @@ Still lateral rather than a plain join, for the reason the subqueries were not
 one join either: joining `submissions` to `earnings` and then aggregating counts
 each submission once per earning row.
 
+It is on screen, not just in JSON: filtering the listing to one campaign renders
+it as a panel above the table — submission/pending/approved counts, net paid,
+platform fee, gross paid, and a bar for the remaining budget. Where the spent
+budget exceeds what this system paid, the panel says so in a line rather than
+leaving a reviewer to wonder whether the books balance.
+
+The panel is a server component calling `campaignSummary()` directly, not a
+`fetch` of its own endpoint — ADR-0003 again. It gets its own Suspense boundary
+so two aggregates never hold up the table, and `router.refresh()` after a review
+updates it along with the rows.
+
 `schema.sql` indexes nothing on `earnings.campaign_id`, so the money side was a
 sequential scan — harmless against the handful of rows this system has written,
 and the wrong shape once `earnings` grows with every approval. The index added
@@ -530,10 +541,10 @@ wrong.
   keyset pagination. Fine at 2 500 pages of admin queue, not fine as a public API.
 - **No auth.** There is one actor in this slice and the brief does not ask for
   it, so every request is trusted as an admin.
-- **A summary page for the endpoint.** B3 ships as JSON only; nothing in the UI
-  consumes it yet.
 - **No rejection reason.** The schema has nowhere to store one
   ([ADR-0005](docs/adr/0005-rejection-is-the-other-half-of-a-review.md)).
-- **No bulk review.** One row at a time; a 50 000-row queue eventually wants
-  "approve everything matching these filters", which is a different transaction
-  and a different confirmation story.
+- **No bulk review.** One row at a time. A 50 000-row queue eventually wants
+  "approve everything matching these filters", and that is not a loop over the
+  existing button: it needs a decision about partial failure (budget runs out at
+  row 137 of 500 — roll back all of it, or keep what was paid?) and a
+  confirmation that can state a total it has to compute first.

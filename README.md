@@ -73,7 +73,8 @@ digunakan karena tabel awal sudah disediakan oleh `schema.sql`.
 - **B2:** Jawaban tentang penurunan jumlah views setelah approval, tersedia di
   bagian [Jawaban B2](#jawaban-b2--views-turun-setelah-approval).
 - **B3:** `GET /api/campaigns/:id/summary` untuk ringkasan campaign, dikerjakan
-  dalam satu query dengan dua kali scan. Rinciannya di
+  dalam satu query dengan dua kali scan, dan ditampilkan di halaman `/review`
+  ketika filter campaign dipilih. Rinciannya di
   [bagian 5](#5-ringkasan-campaign-dikerjakan-dalam-satu-query).
 - `GET /api/creators` sebagai sumber saran username creator pada filter.
 
@@ -207,7 +208,16 @@ ketika tabel earning bertambah seiring setiap approval.
 
 Nilai `grossPaid` tidak akan sama dengan `totalBudget - remainingBudget` pada
 campaign hasil seed, karena data `approved` bawaan seed tidak memiliki earning
-dan tidak mengurangi budget.
+dan tidak mengurangi budget. Panel ringkasan menyebutkan selisih tersebut secara
+eksplisit agar tidak terbaca sebagai pembukuan yang tidak seimbang.
+
+Ringkasan ini ditampilkan di halaman `/review` sebagai panel di atas tabel,
+muncul ketika filter campaign dipilih. Panelnya berupa server component yang
+memanggil modul query yang sama dengan route handler, bukan melakukan `fetch` ke
+endpoint sendiri, dengan alasan yang sama seperti tabel pada
+[bagian 6](#6-pemisahan-server-component-dan-client-component). Panel memiliki
+boundary `Suspense` sendiri sehingga agregatnya tidak menahan tampilnya tabel,
+dan ikut diperbarui setelah approve atau reject melalui `router.refresh()`.
 
 ### 6. Pemisahan server component dan client component
 
@@ -265,6 +275,10 @@ memerlukan perubahan skema dan keputusan produk di luar cakupan take-home ini.
 - Autentikasi belum diterapkan karena tidak termasuk dalam soal.
 - Reject belum memiliki alasan karena skema yang disediakan tidak menyediakan
   kolom untuk menyimpannya.
-- Belum ada review massal dan belum ada halaman UI khusus untuk endpoint summary.
+- Belum ada review massal. Approve dan reject masih dilakukan satu baris setiap
+  kali. Fitur ini tidak sekadar mengulang tombol yang ada, karena memerlukan
+  keputusan mengenai kegagalan sebagian, misalnya ketika budget habis di tengah
+  proses, serta bentuk konfirmasi yang berbeda untuk total nominal yang tidak
+  diketahui di awal.
 - Dokumentasi versi bahasa Inggris yang lebih rinci tersedia di
   [README.en.md](README.en.md).

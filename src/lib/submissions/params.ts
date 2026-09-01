@@ -9,7 +9,19 @@ export type ListParams = {
   per: number
   status?: SubmissionStatus
   campaignId?: number
-  /** Creator username prefix, already trimmed and lowercased. */
+  /**
+   * Exactly this creator username. What the picker sends once a name has been
+   * chosen from its suggestions.
+   *
+   * The username rather than the id, so the URL stays readable and the picker
+   * can show what is filtered straight from it — with an id it would have to
+   * fetch the name back on every load just to fill its own input.
+   */
+  creator?: string
+  /**
+   * Free-text substring of a creator username, for when no creator was chosen.
+   * Already trimmed and lowercased. `q` finds candidates, `creator` names one.
+   */
   q?: string
 }
 
@@ -18,7 +30,7 @@ export type ParseResult =
   | { ok: false; errors: string[] }
 
 /**
- * Hand-rolled rather than zod: five params, and this keeps the dependency list
+ * Hand-rolled rather than zod: six params, and this keeps the dependency list
  * to what the app actually needs. `status` has no default — the /review page
  * supplies `pending` itself, so the API stays a faithful view of the table.
  *
@@ -64,6 +76,7 @@ export function parseListParams(input: URLSearchParams): ParseResult {
       per: per ?? DEFAULT_PER_PAGE,
       status,
       campaignId,
+      creator: input.get('creator')?.trim() || undefined,
       q: input.get('q')?.trim().toLowerCase() || undefined,
     },
   }

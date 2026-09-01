@@ -28,8 +28,13 @@ export async function seedFixture(options: {
   /** One entry per submission. */
   subs: Array<{ views: number; status?: SubmissionStatus }>
   campaignStatus?: 'active' | 'paused' | 'closed'
+  /**
+   * Overrides the generated username, so a test can create a creator whose name
+   * has another fixture's name as a prefix. Must still be unique.
+   */
+  username?: string
 }): Promise<Fixture> {
-  const username = `${runId}_${unique++}`
+  const username = options.username ?? `${runId}_${unique++}`
 
   const [creator] = await db
     .insert(creators)

@@ -55,7 +55,7 @@ export const submissions = pgTable(
     reviewedAt: timestamp({ withTimezone: true }),
   },
   // Declared so the listing query's index usage is visible from the model.
-  // Created by migrations/0001_indexes.sql, not by drizzle.
+  // Created by the hand-written migrations in drizzle/, not generated.
   (t) => [
     index('submissions_status_submitted_at_id_idx').on(
       t.status,
@@ -64,6 +64,12 @@ export const submissions = pgTable(
     ),
     index('submissions_campaign_status_submitted_at_id_idx').on(
       t.campaignId,
+      t.status,
+      t.submittedAt.desc(),
+      t.id.desc(),
+    ),
+    index('submissions_creator_status_submitted_at_id_idx').on(
+      t.creatorId,
       t.status,
       t.submittedAt.desc(),
       t.id.desc(),

@@ -108,6 +108,55 @@ describe('listSubmissions', () => {
     expect(total).toBe(0)
   })
 
+  it('filters to exactly one creator, where the substring search would not', async () => {
+    const { username, campaignId } = await sixPending()
+    // A second creator whose username has the first one as a prefix, which is
+    // exactly the case the typeahead has to get right: picking `creator_190`
+    // must not return `creator_1909`'s submissions.
+    const sibling = await seed({
+      cpm: 1500,
+      remainingBudget: 1_000_000,
+      subs: [{ views: 10 }, { views: 20 }],
+      username: `${username}_extra`,
+    })
+    expect(sibling.username.startsWith(username)).toBe(true)
+
+    const substring = await listSubmissions({ page: 1, per: 50, q: username })
+    expect(substring.total).toBe(8)
+
+    const exact = await listSubmissions({ page: 1, per: 50, creator: username })
+    expect(exact.total).toBe(6)
+    expect(exact.rows.every((row) => row.creatorUsername === username)).toBe(true)
+    expect(exact.rows.every((row) => row.campaignId === campaignId)).toBe(true)
+  })
+
+  it('matches the creator name exactly, not case-insensitively or partially', async () => {
+    const { username } = await sixPending()
+
+    expect(
+      (await listSubmissions({ page: 1, per: 20, creator: username.slice(0, -1) })).total,
+    ).toBe(0)
+    expect(
+      (await listSubmissions({ page: 1, per: 20, creator: username.toUpperCase() })).total,
+    ).toBe(0)
+  })
+
+  it('applies the exact creator alongside the other filters', async () => {
+    const { username } = await sixPending()
+
+    const pending = await listSubmissions({
+      page: 1,
+      per: 20,
+      creator: username,
+      status: 'pending',
+    })
+    expect(pending.total).toBe(4)
+
+    const paged = await listSubmissions({ page: 2, per: 2, creator: username })
+    expect(paged.total).toBe(6)
+    expect(paged.rows).toHaveLength(2)
+  })
+
   it('counts with the search applied, not just the page', async () => {
     const { username } = await sixPending()
 

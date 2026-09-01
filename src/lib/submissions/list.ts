@@ -43,18 +43,25 @@ export type SubmissionList = {
  * /review page call this — see docs/adr/0003.
  */
 export async function listSubmissions(params: ListParams): Promise<SubmissionList> {
-  const { page, per, q } = params
+  const { page, per, creator, q } = params
 
   const where = and(
     params.status ? eq(submissions.status, params.status) : undefined,
     params.campaignId ? eq(submissions.campaignId, params.campaignId) : undefined,
+    // One creator exactly, on the unique username index. Separate from `q`:
+    // that one is a substring, so `creator_190` also matches `creator_1909`.
+    // Both apply when both are given, but the UI only ever sends one — picking
+    // a name from the typeahead replaces the search rather than narrowing it.
+    creator ? eq(creators.username, creator) : undefined,
     q ? sql`lower(${creators.username}) like ${likeContains(q)}` : undefined,
   )
 
-  // The count query only joins creators when the search needs it; the page
+  // The count query joins creators only when a creator filter needs it; the page
   // query needs both joins anyway to render username and campaign title.
   const countQuery = db.select({ total: count() }).from(submissions).$dynamic()
-  if (q) countQuery.innerJoin(creators, eq(creators.id, submissions.creatorId))
+  if (creator || q) {
+    countQuery.innerJoin(creators, eq(creators.id, submissions.creatorId))
+  }
 
   const [rows, totals] = await Promise.all([
     db

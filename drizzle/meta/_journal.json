@@ -15,6 +15,13 @@
       "when": 1788256601303,
       "tag": "0001_username_trigram",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1788258968294,
+      "tag": "0002_creator_listing_index",
+      "breakpoints": true
     }
   ]
 }

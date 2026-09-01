@@ -1,6 +1,7 @@
 # ClipPay — review & approve
 
-*English. [Bahasa Indonesia](README.md) is the default.*
+*English — the long version, with the implementation detail.
+[Bahasa Indonesia](README.md) is the default and the shorter read.*
 
 The admin slice: list submissions, review one, pay the creator, spend the
 campaign's budget. Money correctness and behaviour under concurrent approvals
@@ -32,7 +33,7 @@ and `db:migrate` is drizzle-kit. Both are idempotent in the sense that matters:
 and `db:migrate` skips migrations already recorded in `drizzle.__drizzle_migrations`.
 
 ```bash
-npm test        # 55 tests, needs the database up
+npm test        # 57 tests, needs the database up
 npm run lint
 npm run build
 ```
@@ -406,12 +407,23 @@ platform is `Capitalised`, Approve is green and Reject is red because they do
 opposite things, and every button carries `cursor-pointer` — Tailwind's reset
 gives buttons `cursor: default`, which reads as "not clickable".
 
-The table also carries the two numbers an approve decision actually turns on,
-side by side: **amount to pay** (net to the creator, with the gross that leaves
-the budget underneath) and the campaign's **remaining budget with its total
-underneath**. Both come from the same `calculateEarning` the transaction uses, so
-the row cannot disagree with the payment, and a refusal for insufficient budget
-is visible in the row before the button is pressed.
+The table carries the two numbers an approve decision actually turns on, side by
+side: **amount to pay** (net to the creator, with the gross that leaves the budget
+underneath) and the campaign's **remaining budget with its total underneath**.
+Both come from the same `calculateEarning` the transaction uses, so the row cannot
+disagree with the payment, and a refusal for insufficient budget is visible in the
+row before the button is pressed.
+
+**Campaign status** is a column too, and deliberately not alarming on
+`paused`/`closed`: those still approve, because budget is the only gate
+([ADR-0001](docs/adr/0001-budget-is-the-only-approval-gate.md)). It is context an
+admin should see, not a reason the row cannot be paid.
+
+Ten columns is a lot, so the page is `max-w-[96rem]` with `px-4` and the cells are
+`px-3 py-2`: the whole table fits without a scrollbar at 1 280 px and above
+(measured: 1 246 px of table in a 1 246 px wrapper at 1 280). Below that the table
+scrolls inside its own `overflow-x-auto` container and the page body never
+scrolls sideways.
 
 ### One bug this refactor exposed
 

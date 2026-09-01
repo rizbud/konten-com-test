@@ -51,6 +51,15 @@ export function SubmissionsTable({ rows }: { rows: Submission[] }) {
     setTimeout(() => dismissToast(id), TOAST_MS)
   }
 
+  /**
+   * Both entry points — the row and the detail dialog — land here. The detail
+   * dialog closes on the way, so exactly one dialog is ever open.
+   */
+  function startReview(submissionId: number, action: ReviewAction) {
+    setDetailId(null)
+    setConfirming({ submissionId, action })
+  }
+
   async function review({ submissionId, action }: Confirming) {
     setStates((current) => ({
       ...current,
@@ -119,9 +128,7 @@ export function SubmissionsTable({ rows }: { rows: Submission[] }) {
                 key={submission.id}
                 submission={submission}
                 state={states[submission.id] ?? IDLE}
-                onReview={(submissionId, action) =>
-                  setConfirming({ submissionId, action })
-                }
+                onReview={startReview}
                 onOpenDetail={setDetailId}
                 disabled={isRefreshing}
               />
@@ -145,7 +152,9 @@ export function SubmissionsTable({ rows }: { rows: Submission[] }) {
 
       <SubmissionDetailDialog
         submission={find(detailId ?? undefined)}
+        onReview={startReview}
         onClose={() => setDetailId(null)}
+        disabled={isRefreshing}
       />
 
       <Toasts toasts={toasts} onDismiss={dismissToast} />

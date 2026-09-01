@@ -407,6 +407,13 @@ what approving would pay right now — including a line explaining, where it
 applies, that the views round down to zero rupiah or that the budget will not
 cover the gross.
 
+Approve and Reject sit in its footer too, for a pending submission — it is the
+screen with the most context, so it is the natural place to decide from. They
+take the same route as the row's buttons: report an id and an action, and the
+list swaps the detail dialog for the confirmation. Two stacked dialogs would be
+worse, and nothing is lost, because the confirmation repeats the amount. An
+already-reviewed submission gets Close and nothing else.
+
 It needs no endpoint and has no loading state: the campaign columns ride along on
 a join the listing already does. A per-row fetch on open would have been an N+1
 waiting to be written.

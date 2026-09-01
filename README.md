@@ -44,7 +44,7 @@ npm run build
 | `POST /api/submissions/:id/reject` | separuh lain dari sebuah Review — tanpa uang, penjaga yang sama |
 | `GET /api/creators` | sumber typeahead filter creator, dibatasi 5 |
 | `GET /api/campaigns/:id/summary` | bonus B3, satu kali jalan ke database |
-| `/review` | tabel di server, filter di URL, approve/reject per baris dengan konfirmasi, dialog detail |
+| `/review` | tabel di server, filter di URL, approve/reject dengan konfirmasi (dari baris atau dari dialog detail) |
 
 Bonus yang dikerjakan: **B1** (test perhitungan uang), **B2** (jawaban di bawah),
 **B3** (endpoint summary).

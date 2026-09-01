@@ -22,6 +22,13 @@
       "when": 1788258968294,
       "tag": "0002_creator_listing_index",
       "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "7",
+      "when": 1788260327739,
+      "tag": "0003_earnings_campaign_index",
+      "breakpoints": true
     }
   ]
 }

@@ -105,6 +105,7 @@ export function SubmissionsTable({ rows }: { rows: Submission[] }) {
               <Th>Campaign</Th>
               <Th>Platform</Th>
               <Th className="text-right">Views</Th>
+              <Th className="text-right">Amount to pay</Th>
               <Th className="text-right">Remaining budget</Th>
               <Th>Submitted</Th>
               <Th>Status</Th>

@@ -10,6 +10,7 @@ import {
   SUCCESS,
   Td,
 } from '../ui'
+import { earningPreview } from './review-details'
 
 export type ReviewAction = 'approve' | 'reject'
 
@@ -39,6 +40,9 @@ export function SubmissionRow({
 }) {
   const sending = state.kind === 'sending'
   const busy = disabled || sending
+  // Same pure function the transaction uses, so the column and the payment
+  // cannot disagree. Still a preview: the written amount is computed in-tx.
+  const { gross, net } = earningPreview(submission)
 
   return (
     <tr>
@@ -55,6 +59,10 @@ export function SubmissionRow({
       </Td>
       <Td className={`capitalize ${MUTED}`}>{submission.platform}</Td>
       <Td className="text-right tabular-nums">{formatNumber(submission.views)}</Td>
+      <Td className="whitespace-nowrap text-right tabular-nums">
+        {formatRupiah(net)}
+        <div className={`text-xs ${MUTED}`}>{formatRupiah(gross)} gross</div>
+      </Td>
       <Td className="whitespace-nowrap text-right tabular-nums">
         {formatRupiah(submission.campaignRemainingBudget)}
         <div className={`text-xs ${MUTED}`}>

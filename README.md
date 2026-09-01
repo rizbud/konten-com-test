@@ -1,70 +1,76 @@
 # ClipPay — review & approve
 
-The admin slice: list submissions, approve one, pay the creator, spend the
-campaign's budget. Money correctness and behaviour under concurrent approvals
-were the two things optimised for; everything else was kept boring on purpose.
+*Bahasa Indonesia. Versi lengkap dalam bahasa Inggris: [README.en.md](README.en.md).*
 
-Domain vocabulary is in [CONTEXT.md](CONTEXT.md), the decisions that were made
-before writing code in [docs/adr/](docs/adr/), and the build order in
+Irisan sisi admin: menampilkan submission, me-review satu, membayar creator, dan
+memotong Remaining Budget campaign. Dua hal yang dikejar lebih dulu adalah
+kebenaran uang dan perilaku saat approve terjadi bersamaan; sisanya sengaja
+dibuat sepolos mungkin.
+
+Istilah domain ada di [CONTEXT.md](CONTEXT.md), keputusan yang diambil sebelum
+menulis kode ada di [docs/adr/](docs/adr/), dan urutan pengerjaannya di
 [PLAN.md](PLAN.md).
 
-## Run it
+## Cara menjalankan
 
-```bash
-docker compose up -d
-psql "postgresql://clippay:clippay@localhost:5433/clippay" -f schema.sql
-psql "postgresql://clippay:clippay@localhost:5433/clippay" -f migrations/0001_indexes.sql
-psql "postgresql://clippay:clippay@localhost:5433/clippay" -f migrations/0002_username_trigram.sql
-```
-
-`.env` needs one line:
+`.env` cukup satu baris:
 
 ```
 DATABASE_URL=postgresql://clippay:clippay@localhost:5433/clippay
 ```
 
 ```bash
+docker compose up -d
 npm install
-npm run dev     # http://localhost:3000/review
-npm test        # 44 tests, needs the database up
+npm run db:setup     # menjalankan schema.sql yang diberikan: tabel + seed 50.000 baris
+npm run db:migrate   # drizzle-kit migrate: index tambahan kami, dari drizzle/
+npm run dev          # http://localhost:3000/review
+```
+
+Tidak perlu `psql` sama sekali — `db:setup` menjalankan `schema.sql` lewat driver
+`pg`, dan `db:migrate` adalah drizzle-kit. Keduanya aman diulang dalam arti yang
+relevan: `db:setup` membuat ulang tabel dari nol (file-nya memang berisi
+`drop table`), dan `db:migrate` melewati migration yang sudah tercatat di
+`drizzle.__drizzle_migrations`.
+
+```bash
+npm test        # 55 test, butuh database menyala
 npm run lint
 npm run build
 ```
 
-No `psql` on the host? Every command above works through the container:
-
-```bash
-docker compose exec -T db psql -U clippay -d clippay -f - < schema.sql
-```
-
-## What is here
+## Isi
 
 | | |
 |---|---|
-| `GET /api/submissions` | pagination, `status` / `campaignId` filters, creator username search, exact total |
-| `POST /api/submissions/:id/approve` | the money path: one transaction, budget guard, no double pay |
-| `GET /api/campaigns/:id/summary` | bonus B3, one round trip |
-| `/review` | server-rendered table, URL filter state, per-row approve |
+| `GET /api/submissions` | pagination, filter `status` / `campaignId`, pencarian username creator, total baris eksak |
+| `POST /api/submissions/:id/approve` | jalur uang: satu transaksi, penjaga budget, tanpa pembayaran dobel |
+| `POST /api/submissions/:id/reject` | separuh lainnya dari sebuah Review — tanpa uang, penjaga 409 yang sama |
+| `GET /api/creators` | sumber typeahead untuk filter creator, dibatasi 5 |
+| `GET /api/campaigns/:id/summary` | bonus B3, satu kali jalan ke database |
+| `/review` | tabel yang di-render di server, state filter di URL, approve dan reject per baris |
 
-### Where things live
+### Di mana semuanya
 
 ```
-src/app/                 routes only — a page, three route handlers, one error boundary
-src/components/ui.tsx    shared presentational pieces and the colour tokens
+src/app/                 hanya route — satu page, lima route handler, satu error boundary
+src/components/ui.tsx    komponen presentasional bersama dan token warna
 src/components/pagination.tsx
-src/components/review/   the review screen's own components
-src/db/                  drizzle model of the given schema, and the pool
-src/lib/                 money, formatting, page windows, and the query modules
-src/test/                fixtures for the behaviour tests
+src/components/review/   komponen milik halaman review
+src/db/                  model drizzle atas skema yang diberikan, dan pool-nya
+src/lib/                 uang, format, jendela halaman, dan modul query
+src/test/                fixture untuk test perilaku
+drizzle/                 migration tulis-tangan untuk index yang kami tambahkan
+scripts/db-setup.mjs     menjalankan schema.sql tanpa psql
 ```
 
-Nothing under `src/app/` holds logic beyond reading its own inputs: routes
-validate and delegate, the page fetches and composes. The money is in
-[`src/lib/money.ts`](src/lib/money.ts), the approve transaction in
-[`src/lib/submissions/approve.ts`](src/lib/submissions/approve.ts), the listing
-query in [`src/lib/submissions/list.ts`](src/lib/submissions/list.ts).
+Tidak ada logika di dalam `src/app/` selain membaca input-nya sendiri: route
+memvalidasi lalu mendelegasikan, page mengambil data lalu menyusun tampilan.
+Uang ada di [`src/lib/money.ts`](src/lib/money.ts), transaksi approve di
+[`src/lib/submissions/approve.ts`](src/lib/submissions/approve.ts), query listing
+di [`src/lib/submissions/list.ts`](src/lib/submissions/list.ts).
 
-## The money
+## Uang
 
 ```
 gross = floor(views * cpm / 1000)
@@ -72,263 +78,332 @@ net   = floor(gross * 80 / 100)
 fee   = gross - net
 ```
 
-Integers throughout, one `floor` per value, no float ever touches an amount.
-`fee` is the remainder rather than its own rounded number, so `gross = net + fee`
-holds by construction.
+Integer sepenuhnya, satu `floor` per nilai, tidak ada float yang menyentuh
+nominal. `fee` adalah sisa — bukan angka yang dibulatkan sendiri — sehingga
+`gross = net + fee` selalu benar secara konstruksi.
 
-The brief's reference case is the reason `net` is written that way:
-12 345 views at cpm 1500 gives gross 18 517, and `floor(18517 * 0.8)` is 14 813
-while `18517 - floor(18517 * 0.2)` is 14 814. Both are defensible roundings; only
-one matches the brief. [`money.test.ts`](src/lib/money.test.ts) pins that
-divergence explicitly so a future "simplification" cannot silently move a rupiah.
+Contoh acuan di soal adalah alasan `net` ditulis begitu: 12.345 views dengan CPM
+1500 menghasilkan gross 18.517, dan `floor(18517 * 0.8)` = 14.813 sedangkan
+`18517 - floor(18517 * 0.2)` = 14.814. Dua-duanya pembulatan yang bisa
+dipertahankan; hanya satu yang cocok dengan soal.
+[`money.test.ts`](src/lib/money.test.ts) mengunci perbedaan itu secara eksplisit
+supaya "penyederhanaan" di masa depan tidak menggeser satu rupiah tanpa
+kelihatan.
 
-**Bonus B1 — the tests that matter**, in order: the reference case, the
-`gross = net + fee` reconciliation across every seeded CPM, the rounding
-direction at an exact boundary, and `views = 0`. The reconciliation test is the
-one that would catch a real regression, because it is the invariant the
-`earnings` table has to satisfy for the books to balance.
+**Bonus B1 — test yang paling penting**, berurutan: contoh acuan dari soal,
+rekonsiliasi `gross = net + fee` untuk semua CPM di seed, arah pembulatan tepat
+di batas, dan `views = 0`. Test rekonsiliasi itu yang paling mungkin menangkap
+regresi nyata, karena itulah invarian yang harus dipenuhi tabel `earnings` agar
+pembukuannya seimbang.
 
-## The approve transaction
+## Transaksi approve
 
-One `db.transaction`, built entirely out of conditional UPDATEs so Postgres row
-locks — not application checks — decide who wins:
+Satu `db.transaction`, seluruhnya dibangun dari UPDATE bersyarat supaya row lock
+Postgres — bukan pengecekan di aplikasi — yang menentukan siapa menang:
 
 1. `update submissions set status = 'approved', reviewed_at = now() where id = ? and status = 'pending' returning views, creator_id, campaign_id`
-   — **this is the double-pay guard.** A second caller blocks on the same row,
-   then re-evaluates the condition after the first commits, sees it is no longer
-   pending, and updates zero rows.
-2. Read `cpm` in the same transaction, compute gross/net/fee from the `views`
-   returned in step 1.
+   — **ini penjaga pembayaran dobel.** Pemanggil kedua menunggu di baris yang
+   sama, lalu mengevaluasi ulang kondisinya setelah yang pertama commit, melihat
+   statusnya sudah bukan `pending`, dan meng-update nol baris.
+2. Baca `cpm` di transaksi yang sama, hitung gross/net/fee dari `views` yang
+   dikembalikan langkah 1.
 3. `update campaigns set remaining_budget = remaining_budget - gross where id = ? and remaining_budget >= gross`
-   — zero rows means the campaign cannot cover it. Roll back; never pay part of
-   an earning.
-4. Insert the earning with `views_at_approval` set to the snapshot from step 1.
+   — nol baris berarti campaign tidak mampu menanggungnya. Rollback; tidak pernah
+   membayar sebagian.
+4. Insert Earning dengan `views_at_approval` dari snapshot langkah 1.
 
-The `views` used for the money comes out of step 1's `RETURNING`, so the amount
-paid is computed from the row as it was locked, not from a value read earlier.
+`views` yang dipakai untuk menghitung uang berasal dari `RETURNING` langkah 1,
+jadi nominalnya dihitung dari baris pada saat baris itu di-lock, bukan dari nilai
+yang dibaca sebelumnya.
 
-Outcomes map to `404` (no such submission), `409` (already reviewed), `422`
-(zero earning, or insufficient budget), `400` (bad id). The UI shows a different
-message for each, because "already reviewed" and "out of budget" call for
-different things from an admin.
+Hasilnya dipetakan ke `404` (submission tidak ada), `409` (sudah di-review),
+`422` (Zero Earning, atau Remaining Budget tidak cukup), `400` (id tidak valid).
+UI menampilkan pesan berbeda untuk masing-masing, karena "sudah di-review" dan
+"budget habis" menuntut tindakan berbeda dari admin.
 
-`create unique index on earnings (submission_id)` is a second, database-level
-double-pay guard behind the conditional UPDATE. Redundant by design: it is real
-money, and an index is cheaper than an incident.
+`create unique index on earnings (submission_id)` adalah penjaga pembayaran dobel
+kedua, di level database, di belakang UPDATE bersyarat itu. Redundan dengan
+sengaja: ini uang sungguhan, dan sebuah index lebih murah daripada satu insiden.
 
-Verified by [`approve.test.ts`](src/lib/submissions/approve.test.ts) against the
-real database — ten concurrent approves of one submission produce exactly one
-success, one earning row and one budget decrement; eight concurrent approves
-against a budget that covers three produce exactly three payments, a budget of
-exactly zero, and five submissions still pending. Mocking the driver would have
-tested none of that.
+Diverifikasi oleh [`approve.test.ts`](src/lib/submissions/approve.test.ts)
+terhadap database sungguhan — sepuluh approve bersamaan atas satu submission
+menghasilkan tepat satu sukses, satu baris `earnings`, dan satu kali pengurangan
+budget; delapan approve bersamaan atas budget yang hanya cukup untuk tiga
+menghasilkan tepat tiga pembayaran, budget tepat nol, dan lima submission tetap
+`pending`. Mem-mock driver tidak akan menguji satu pun dari itu.
 
-### Decisions
+### Keputusan
 
-- **Budget is the only gate.** A paused or closed campaign still approves —
-  [ADR-0001](docs/adr/0001-budget-is-the-only-approval-gate.md).
-- **A zero-earning submission is refused** and stays pending —
+- **Budget adalah satu-satunya gerbang.** Campaign `paused` atau `closed` tetap
+  bisa di-approve — [ADR-0001](docs/adr/0001-budget-is-the-only-approval-gate.md).
+- **Submission dengan Zero Earning ditolak** dan tetap `pending` —
   [ADR-0002](docs/adr/0002-zero-earning-submissions-are-not-approvable.md).
-- **Approval is final**, no clawback when views later fall —
-  [ADR-0004](docs/adr/0004-approval-is-final.md), and bonus B2 below.
-- **The page calls the query module, not its own API** —
-  [ADR-0003](docs/adr/0003-one-query-module-not-a-self-http-call.md). Worth
-  knowing before looking for a `fetch` in the page that is not there.
+- **Approval bersifat final**, tidak ada penarikan kembali saat views turun —
+  [ADR-0004](docs/adr/0004-approval-is-final.md), dan bonus B2 di bawah.
+- **Page memanggil modul query, bukan API-nya sendiri** —
+  [ADR-0003](docs/adr/0003-one-query-module-not-a-self-http-call.md). Perlu
+  diketahui sebelum mencari `fetch` di page yang memang tidak ada.
+- **Rejection adalah separuh lainnya dari sebuah Review**, ditambahkan di luar
+  permintaan soal supaya queue punya jalan keluar kedua —
+  [ADR-0005](docs/adr/0005-rejection-is-the-other-half-of-a-review.md).
 
-## The listing query
+## Reject
 
-One statement for the page and one `count(*)` for the total, both built from the
-same where-clause, both under one `Promise.all`. `limit`/`offset` come from
-validated `page`/`per` (`per` capped at 100) — nothing is fetched and then
-sliced. `creators` and `campaigns` are joined in the same statement; the select
-list is only the columns the table renders.
+Tidak ada uang yang berpindah, jadi tidak ada transaksi yang perlu dibuka: satu
+`update … where id = ? and status = 'pending'` sudah seluruh operasinya, atomik
+dengan sendirinya, dengan penjaga yang sama seperti jalur approve. Sepuluh reject
+bersamaan atas satu submission menghasilkan tepat satu sukses dan sembilan 409.
 
-Order is `submitted_at desc, id desc`. The tiebreak is not decoration:
-`submitted_at` is not unique in the seed, and without `id` pages silently
-overlap.
+Karena kedua aksi membawa kondisi itu, keduanya tidak bisa sama-sama berhasil:
+submission yang sudah di-approve tidak bisa di-reject di belakang Earning-nya,
+yang sudah di-reject tidak bisa dibayar kemudian, dan approve yang berlomba
+dengan reject menyisakan tepat satu pemenang dengan status baris yang selalu
+konsisten dengan pembukuan — [`reject.test.ts`](src/lib/submissions/reject.test.ts)
+menguji itu, termasuk lombanya.
 
-Query params are validated at the route boundary and **all** problems come back
-in one 400, so a client fixing a URL sees both mistakes at once. `status` has no
-default in the API — the `/review` page applies `pending` itself, which keeps the
-endpoint a faithful view of the table.
+Reject tidak menyimpan alasan; skemanya tidak punya tempat untuk itu. Hal pertama
+yang ditambahkan kalau admin perlu menjelaskan keputusannya.
 
-Validation is hand-written rather than zod: five parameters did not justify a
-dependency.
+## Query listing
 
-### Indexes
+Satu statement untuk isi halaman dan satu `count(*)` untuk totalnya, keduanya
+dibangun dari where-clause yang sama dan dijalankan dalam satu `Promise.all`.
+`limit`/`offset` berasal dari `page`/`per` yang sudah divalidasi (`per` dibatasi
+100) — tidak ada data yang diambil semua lalu dipotong di aplikasi. `creators`
+dan `campaigns` di-join di statement yang sama; kolom yang di-select hanya yang
+dirender tabel.
 
-In [`migrations/`](migrations/), applied by hand. `drizzle-kit` is deliberately
-not installed — the tables in `schema.sql` are given, and a generated migration
-would try to recreate them. Indexes are the only DDL this project adds, so they
-stay as reviewable SQL.
+Urutannya `submitted_at desc, id desc`. Pemecah seri itu bukan hiasan:
+`submitted_at` tidak unik di seed, dan tanpa `id` halaman akan saling tumpang
+tindih tanpa suara.
 
-| Index | Query it serves |
+Query param divalidasi di batas route dan **semua** masalah dikembalikan dalam
+satu 400, jadi klien yang membetulkan URL melihat kedua kesalahannya sekaligus.
+`status` tidak punya nilai default di API — halaman `/review` yang menerapkan
+`pending` sendiri, sehingga endpoint tetap menjadi cermin apa adanya dari tabel.
+
+Validasinya ditulis tangan, bukan zod: lima parameter tidak sebanding dengan satu
+dependency baru.
+
+### Index
+
+Ada di [`drizzle/`](drizzle/), dijalankan oleh `npm run db:migrate`.
+
+drizzle-kit dipasang **hanya** untuk `migrate`. `drizzle-kit generate` (tanpa
+`--custom`) dan `drizzle-kit push` tidak boleh dijalankan di sini: tabel di
+`schema.sql` adalah pemberian, bukan milik kami untuk dibuat, jadi diff hasil
+generate akan mencoba membuat ulang tabel-tabel itu dan push akan membuang apa
+yang tidak dikenalinya. Kedua migration dibuat dengan `generate --custom` — yang
+hanya menulis file kosong beserta entri journal-nya tanpa membaca skema — lalu
+diisi manual. Jadi DDL-nya tetap SQL yang bisa di-review, sementara drizzle tetap
+mencatat apa yang sudah dijalankan. [`drizzle.config.ts`](drizzle.config.ts)
+menuliskan hal yang sama tepat di sebelah konfigurasinya.
+
+| Index | Query yang dilayani |
 |---|---|
-| `submissions (status, submitted_at desc, id desc)` | the default listing. `EXPLAIN` shows an index scan feeding the LIMIT with **no sort node** — the index supplies both the filter and the order |
-| `submissions (campaign_id, status, submitted_at desc, id desc)` | the same listing with a campaign filter. `campaign_id` leads because it is the more selective column (8 campaigns vs 3 statuses) |
-| `earnings (submission_id)` unique | the second double-pay guard, not a read path |
-| `creators using gin (lower(username) gin_trgm_ops)` | creator substring search |
+| `submissions (status, submitted_at desc, id desc)` | listing default. `EXPLAIN` menunjukkan index scan yang langsung menyuapi LIMIT **tanpa node sort** — satu index melayani filter sekaligus urutannya |
+| `submissions (campaign_id, status, submitted_at desc, id desc)` | listing yang sama dengan filter campaign. `campaign_id` di depan karena lebih selektif (8 campaign vs 3 status) |
+| `earnings (submission_id)` unique | penjaga pembayaran dobel kedua, bukan jalur baca |
+| `creators using gin (lower(username) gin_trgm_ops)` | pencarian substring username creator |
 
-Dropped: the seed's `submissions (status)` and `submissions (campaign_id)`. Both
-are leading-column prefixes of the composites above, so they only cost write
-throughput now. `submissions (submitted_at desc)` was left alone; it serves an
-unfiltered listing, which is not a path this app takes.
+Dibuang: `submissions (status)` dan `submissions (campaign_id)` dari seed.
+Keduanya adalah prefiks kolom depan dari komposit di atas, jadi sekarang hanya
+membebani kecepatan tulis. `submissions (submitted_at desc)` dibiarkan; ia
+melayani listing tanpa filter, yang bukan jalur yang dipakai aplikasi ini.
 
-### Username search is a substring match
+### Pencarian username adalah substring
 
-`lower(username) like '%creator_1%'`, with `%`, `_` and `\` in the user's input
-escaped so a search for `%` matches nothing instead of everything (there is a
-test for that). A fragment from the middle of a name finds it: `eator_195` and
-the suffix `r_1999` both return rows.
+`lower(username) like '%creator_1%'`, dengan `%`, `_` dan `\` dari input pengguna
+di-escape supaya pencarian `%` tidak cocok apa pun, bukan cocok semuanya (ada
+test-nya). Potongan dari tengah nama pun menemukan: `eator_195` dan akhiran
+`r_1999` sama-sama mengembalikan baris.
 
-That leading `%` is exactly what a b-tree cannot serve — there is no prefix to
-seek on — so this needs `pg_trgm`
-([`migrations/0002`](migrations/0002_username_trigram.sql)): a GIN index over the
-three-character shingles of `lower(username)`. `EXPLAIN ANALYZE` on
-`like '%tor_123%'` is a bitmap index scan on `creators_username_trgm_idx`,
-0.2 ms, 3 heap blocks. The b-tree `text_pattern_ops` index this replaced could
-only ever have served a prefix, and the planner never chose it even for that —
-2 000 creators fit in 51 pages, so a sequential scan won.
+`%` di depan itulah yang tidak bisa dilayani b-tree — tidak ada prefiks untuk
+di-seek — jadi ini butuh `pg_trgm`
+([`drizzle/0001`](drizzle/0001_username_trigram.sql)): index GIN atas potongan
+tiga karakter dari `lower(username)`. `EXPLAIN ANALYZE` untuk
+`like '%tor_123%'` menghasilkan bitmap index scan pada
+`creators_username_trgm_idx`, 0,2 ms, 3 heap block. Index b-tree
+`text_pattern_ops` yang digantikannya hanya pernah bisa melayani prefiks, dan
+planner bahkan tidak memilihnya untuk itu — 2.000 creator hanya memenuhi 51
+halaman, jadi sequential scan menang.
 
-`ilike` reads better but cannot use the index: the indexed expression is
-`lower(username)`, so the predicate has to be written the same way.
+`ilike` lebih enak dibaca tapi tidak bisa memakai index itu: ekspresi yang
+di-index adalah `lower(username)`, jadi predikatnya harus ditulis sama.
 
-## Bonus B2 — views fall after an approval
+## Bonus B2 — views turun setelah di-approve
 
-**Nothing happens. The earning stands.** Approving pays the creator there and
-then; there is no later payout stage to adjust, and `earnings` has no room to
-store a revision. A video approved at 100 000 views that decays to 60 000 keeps
-its earning, and `views_at_approval` records the 100 000 the payment was computed
-from, so the basis of every past payment stays auditable when the live count no
-longer matches it.
+**Tidak ada yang terjadi. Earning-nya tetap berlaku.** Approve membayar creator
+saat itu juga; tidak ada tahap pembayaran berikutnya untuk dikoreksi, dan
+`earnings` tidak punya tempat untuk menyimpan revisi. Video yang di-approve pada
+100.000 views lalu turun ke 60.000 tetap memegang Earning-nya, dan
+`views_at_approval` mencatat 100.000 yang menjadi dasar perhitungannya — sehingga
+dasar setiap pembayaran lama tetap bisa diaudit ketika angka live-nya sudah tidak
+cocok.
 
-**For the creator:** their income is final the moment an admin clicks approve.
-The alternative — clawing back the difference — makes a creator's balance a
-function of a platform's fake-view sweep, something they do not control and
-cannot predict. Retroactive debt against people who have already been paid is the
-fastest way to lose the supply side of a two-sided marketplace, and the accounting
-is worse than the exposure it recovers.
+**Bagi creator:** pendapatannya final begitu admin menekan approve. Alternatifnya
+— menarik selisihnya kembali — membuat saldo creator menjadi fungsi dari operasi
+pembersihan views palsu platform, sesuatu yang tidak mereka kendalikan dan tidak
+bisa mereka perkirakan. Menagih utang secara retroaktif kepada orang yang sudah
+dibayar adalah cara tercepat kehilangan sisi suplai sebuah marketplace dua sisi,
+dan kerumitan pembukuannya lebih besar daripada eksposur yang berhasil ditarik.
 
-**For the brand:** they carry the decay on work already paid for. That is a real
-cost, and the lever for it is on the approval side, not the reversal side:
+**Bagi brand:** mereka menanggung penurunan views atas pekerjaan yang sudah
+dibayar. Itu biaya nyata, dan tuasnya ada di sisi approval, bukan di sisi
+pembatalan:
 
-- approve on settled views — a hold period (approve at day 7, not day 1) removes
-  most of the decay, because scrubbing happens early;
-- price it in — a decay reserve in the campaign budget, or a CPM that assumes a
-  few percent of scrub;
-- cap per submission, so one viral outlier cannot take a disproportionate share
-  of a budget on views that may not survive.
+- approve setelah views mengendap — masa tunggu (approve di hari ke-7, bukan hari
+  pertama) menghilangkan sebagian besar penurunan, karena pembersihan terjadi di
+  awal;
+- masukkan ke harga — cadangan penurunan di dalam budget campaign, atau CPM yang
+  sudah mengasumsikan beberapa persen pembersihan;
+- batas per submission, supaya satu video viral tidak mengambil porsi budget yang
+  tidak proporsional atas views yang belum tentu bertahan.
 
-If a brand genuinely needs the corrected number, the honest shape is not a
-clawback but a **second stage**: `earnings` becomes an accrual and payout happens
-after a settle window. That is a schema change and a different product decision,
-so it is named here rather than half-built. Written up as
+Kalau brand benar-benar butuh angka yang terkoreksi, bentuk yang jujur bukan
+pembatalan melainkan **tahap kedua**: `earnings` menjadi akrual dan pencairan
+terjadi setelah masa pengendapan. Itu perubahan skema dan keputusan produk yang
+berbeda, jadi disebut di sini alih-alih dikerjakan setengah. Ditulis sebagai
 [ADR-0004](docs/adr/0004-approval-is-final.md).
 
-## Notes worth reading before the code
+## Catatan yang layak dibaca sebelum kodenya
 
-- **`bigint` money is read as JavaScript numbers** (`mode: 'number'`), exact to
-  2^53 rupiah — about 9 quadrillion. `mode: 'bigint'` would push `BigInt`
-  through every calculation and JSON boundary for a ceiling no campaign will
-  reach. The one place a real `bigint` survives is `sum()` in the campaign
-  summary, which pg returns as a string and which is converted explicitly.
-- **Drizzle drops the table qualifier** for a column object interpolated into a
-  `sql` template in a select list: `${submissions.campaignId} = ${campaigns.id}`
-  renders as `"campaign_id" = "id"`, which resolves to submissions' *own* id and
-  silently counts the wrong rows. The campaign summary's correlated subqueries
-  are therefore written as literal SQL, with a comment saying why. This was found
-  because the endpoint returned `submissionCount: 2` for a campaign with 6 297
-  submissions — hence a test that pins the count.
-- **The seed lands every submission in `pending`** on Postgres 16. The status is
-  picked in a `cross join lateral` that does not reference the outer row, so the
-  planner evaluates it once and all 50 000 rows share it. `schema.sql` is given
-  input and was left untouched; the behaviour tests build their own fixtures, so
-  they cover `approved` and `rejected` rows regardless. Filtering `/review` by
-  `approved` on a fresh database shows an empty table for this reason, not a bug
-  in the filter.
-- **Legacy approvals**: the seed's `approved` rows deliberately have no earning
-  and consumed no budget. Read-only history, nothing reconciles them — which is
-  why `grossPaid` in the campaign summary does not equal
+- **Uang bertipe `bigint` dibaca sebagai number JavaScript** (`mode: 'number'`),
+  eksak sampai 2^53 rupiah — sekitar 9 kuadriliun. `mode: 'bigint'` akan memaksa
+  `BigInt` melewati setiap perhitungan dan setiap batas JSON demi plafon yang
+  tidak akan dicapai campaign mana pun. Satu-satunya tempat `bigint` sungguhan
+  bertahan adalah `sum()` di campaign summary, yang dikembalikan pg sebagai
+  string dan dikonversi secara eksplisit.
+- **Drizzle membuang kualifier tabel** untuk objek kolom yang di-interpolasi ke
+  dalam template `sql` di select list: `${submissions.campaignId} = ${campaigns.id}`
+  ter-render menjadi `"campaign_id" = "id"`, yang resolusinya jatuh ke `id`
+  submissions sendiri dan menghitung baris yang salah tanpa error. Karena itu
+  subquery berkorelasi di campaign summary ditulis sebagai SQL literal, dengan
+  komentar alasannya. Ini ketemu karena endpoint-nya mengembalikan
+  `submissionCount: 2` untuk campaign dengan 6.297 submission — maka ada test
+  yang mengunci angka itu.
+- **Seed menempatkan semua submission di `pending`** pada Postgres 16. Statusnya
+  dipilih di sebuah `cross join lateral` yang tidak mereferensikan baris luar,
+  jadi planner mengevaluasinya sekali dan 50.000 baris memakai hasil yang sama.
+  `schema.sql` adalah input pemberian dan tidak diubah; test perilaku membangun
+  fixture-nya sendiri sehingga tetap mencakup baris `approved` dan `rejected`.
+  Memfilter `/review` dengan `approved` pada database yang baru di-seed
+  menampilkan tabel kosong karena ini, bukan karena filternya rusak.
+- **Legacy Approval**: baris `approved` dari seed memang tidak punya Earning dan
+  tidak memotong budget. Riwayat baca-saja, tidak ada yang merekonsiliasinya —
+  itu sebabnya `grossPaid` di campaign summary tidak sama dengan
   `totalBudget - remainingBudget`.
 
-## The `/review` page
+## Halaman `/review`
 
-A server component reads `searchParams`, applies its own `status=pending`
-default, and calls `listSubmissions` directly. Filter state lives in the URL, so
-it survives a reload and can be pasted to someone else.
+Sebuah server component membaca `searchParams`, menerapkan default
+`status=pending` miliknya sendiri, lalu memanggil `listSubmissions` langsung.
+State filter tinggal di URL, jadi ia bertahan saat reload dan bisa dikirim ke
+orang lain.
 
-**Both side effects are owned by the list, not by the widget that triggers
-them.** This is deliberate and is the shape worth reviewing:
+**Kedua efek samping dimiliki oleh list, bukan oleh widget yang memicunya.** Ini
+disengaja dan inilah bentuk yang paling layak di-review:
 
-- [`ReviewFilters`](src/components/review/review-filters.tsx) owns one `apply`
-  function. It is the only code that knows what a filter change means — which
-  params it touches, that it clears the offset, and that it happens inside a
-  transition so `isPending` can say "Updating…". The status `<select>` and the
-  [`CampaignPicker`](src/components/review/campaign-picker.tsx) below it are
-  inputs that report a value and nothing else.
-- [`SubmissionsTable`](src/components/review/submissions-table.tsx) owns the
-  approve call for every row in it: the endpoint, reading its response, and what
-  each status code means. [`SubmissionRow`](src/components/review/submission-row.tsx)
-  is presentational — it reports an id and renders one of four states it was
-  handed. It does not know approving is HTTP.
+- [`ReviewFilters`](src/components/review/review-filters.tsx) memiliki satu
+  fungsi `apply`. Hanya kode itu yang tahu arti sebuah perubahan filter — param
+  mana yang disentuh, bahwa offset direset, dan bahwa itu terjadi di dalam
+  transition supaya `isPending` bisa berkata "Updating…". `<select>` status,
+  [`CampaignPicker`](src/components/review/campaign-picker.tsx) dan
+  [`CreatorPicker`](src/components/review/creator-picker.tsx) adalah input yang
+  melaporkan nilai, tidak lebih.
+- [`SubmissionsTable`](src/components/review/submissions-table.tsx) memiliki
+  pemanggilan review untuk setiap baris di dalamnya: kedua endpoint, cara membaca
+  responsnya, dan arti setiap status code.
+  [`SubmissionRow`](src/components/review/submission-row.tsx) presentasional — ia
+  melaporkan sebuah id dan sebuah aksi, lalu merender salah satu dari empat state
+  yang diberikan kepadanya. Ia tidak tahu bahwa review itu HTTP.
 
-No custom hooks. Each of those is one piece of state and one function used in one
-place; a `useApprovals`/`useFilters` wrapper would move the same lines behind a
-name and buy nothing. They earn their keep at the second caller, not the first.
+Tidak ada custom hook. Masing-masing di atas adalah satu potong state dan satu
+fungsi yang dipakai di satu tempat; pembungkus `useReviews`/`useFilters` hanya
+akan memindahkan baris yang sama ke belakang sebuah nama. Hook mulai berguna pada
+pemanggil kedua, bukan yang pertama.
 
-Pagination is numbered — first, last, and the current page with a neighbour
-either side, gaps in between, which
-[`pageWindow`](src/lib/pagination.ts) computes and a test pins (including the
-case where a gap would stand in for a single page, and never emitting a page
-twice). They are plain `<Link>`s, so paging needs no client JavaScript and every
-page is a real bookmarkable URL.
+**Tidak ada yang difilter sampai Apply.** Setiap kontrol mengubah draft lokal dan
+satu submit mengubah seluruh draft menjadi satu navigasi — jadi mengganti status
+dan campaign sekaligus hanya sekali jalan ke server, dan input setengah jadi
+tidak pernah men-query 50.000 baris. Draft-nya dimulai dari URL, dan page
+memberi komponen itu sebuah key dari query string: sebuah navigasi me-mount ulang
+komponennya sehingga draft-nya sama dengan yang tampil, tanpa effect yang
+menyinkronkan dua sumber kebenaran.
 
-The campaign filter is a typeahead rather than a `<select>`, because a native
-select cannot be typed into and eight campaigns is only eight today. It is a
-plain filtered listbox — click, or Enter for the first match, Escape to close —
-not a combobox library.
+Pagination-nya bernomor — halaman pertama, terakhir, dan halaman aktif dengan
+satu tetangga di kiri-kanan, dengan celah di antaranya, yang dihitung
+[`pageWindow`](src/lib/pagination.ts) dan dikunci oleh test (termasuk kasus di
+mana sebuah celah hanya akan menyembunyikan satu halaman, dan bahwa satu halaman
+tidak pernah muncul dua kali). Semuanya `<Link>` biasa, jadi berpindah halaman
+tidak butuh JavaScript di klien dan setiap halaman adalah URL nyata yang bisa
+di-bookmark.
 
-The four states: loading is a `Suspense` skeleton keyed on the query string, so
-it reappears on every filter change; empty distinguishes "nothing matches" from
-"this page is past the end"; invalid filters render the validation errors
-server-side; and `error.tsx` catches a database that does not answer, saying
-plainly that nothing was approved.
+Dua filter yang menyebut nama sesuatu memakai typeahead, bukan `<select>`, karena
+select bawaan browser tidak bisa diketik. Keduanya bukan library combobox —
+listbox yang difilter biasa: klik, Enter untuk hasil pertama, Escape untuk
+menutup.
 
-Colour is centralised in [`src/components/ui.tsx`](src/components/ui.tsx) so a
-contrast fix happens once. Muted text is `zinc-600` / `zinc-400` rather than
-`zinc-500`, which read as grey-on-grey against *both* backgrounds. Every text
-node on the page was measured against its real computed background in the
-browser: the lowest ratio is now 5.36:1 (white on `emerald-700`, the Approve
-button) in both themes, against the 4.5:1 minimum. The only deliberate exception
-is a disabled Previous/Next, which has to read as unavailable.
+- **Campaign** memfilter secara lokal. Delapan campaign-nya sudah datang bersama
+  halaman, jadi tidak ada yang perlu di-fetch.
+- **Creator** bertanya ke database, lima sekaligus, karena 2.000 nama bukan
+  daftar untuk di-scroll — mengetik lebih panjang yang mempersempitnya. Ia
+  di-debounce 250 ms, membatalkan request yang masih jalan pada ketikan
+  berikutnya, dan menyimpan hasil **bersama query yang dijawabnya**, sehingga
+  jawaban yang datang setelah teksnya berubah tidak pernah ditampilkan. Nilainya
+  tetap teks bebas: username sepotong tetap berlaku sebagai pencarian substring,
+  dipilih dari saran atau tidak.
 
-### One bug this refactor exposed
+Empat state-nya: loading berupa skeleton `Suspense` yang di-key pada query
+string, jadi ia muncul lagi setiap kali filter berubah; kosong membedakan "tidak
+ada yang cocok" dari "halaman ini sudah melewati baris terakhir"; filter tidak
+valid merender pesan validasinya di server; dan `error.tsx` menangkap database
+yang tidak menjawab, dengan menyatakan terang-terangan bahwa tidak ada yang
+di-approve.
 
-"All statuses" did not work. The page treats an absent `status` as "use the
-default, `pending`", and the filter used to *delete* the param when cleared — so
-picking "All statuses" snapped straight back to pending. `apply` now writes
-`?status=` for that case: absent means "default", present-but-empty means "all".
-The API already read a blank param as no filter, so only the page's writer was
-wrong.
+Warna dipusatkan di [`src/components/ui.tsx`](src/components/ui.tsx) supaya
+perbaikan kontras cukup sekali. Teks redup memakai `zinc-600` / `zinc-400`, bukan
+`zinc-500` yang terbaca kelabu-di-atas-kelabu di **kedua** latar. Setiap simpul
+teks di halaman diukur terhadap latar terhitungnya yang sebenarnya di browser:
+rasio terendah sekarang 5,36:1 (putih di atas `emerald-700`, tombol Approve) di
+kedua tema, terhadap minimum 4,5:1. Satu-satunya pengecualian yang disengaja
+adalah Previous/Next yang sedang mati, yang memang harus terbaca tidak tersedia.
 
-## Cut for time, and what comes next
+Hal-hal kecil di file yang sama supaya konsisten dengan sendirinya: status
+dirender `HURUF BESAR` dan platform `Huruf depan besar`, dan setiap tombol
+membawa `cursor-pointer` — reset Tailwind memberi tombol `cursor: default`, yang
+terbaca "tidak bisa diklik".
 
-- **Rejection.** Not in scope, which leaves zero-earning submissions stranded in
-  the queue with no action that clears them
-  ([ADR-0002](docs/adr/0002-zero-earning-submissions-are-not-approvable.md)).
-  First thing to build next.
-- **No component tests.** React Testing Library is not installed. The graded
-  risk is in the money and the transaction, and the budget went there; the page
-  was verified by driving it in a browser instead — approving a row, watching the
-  earning row and the budget land exactly, and checking the 409/422 messages.
-- **`count(*)` is exact on every listing**, and it is the first thing to degrade
-  well past 50 000 rows. The upgrade is a cheap estimate from
-  `pg_class.reltuples` for unfiltered counts, or dropping the exact total for an
-  offset-free keyset cursor (`where (submitted_at, id) < (?, ?)`), which the
-  `submitted_at desc, id desc` ordering already sets up.
-- **Deep offsets.** `offset 40000` still walks 40 000 index entries. Same fix:
-  keyset pagination. Fine at 2 500 pages of admin queue, not fine as a public API.
-- **No auth.** There is one actor in this slice and the brief does not ask for
-  it, so every request is trusted as an admin.
-- **A summary page for the endpoint.** B3 ships as JSON only; nothing in the UI
-  consumes it yet.
+### Satu bug yang tersingkap oleh refactor ini
+
+"All statuses" tidak berfungsi. Page menganggap `status` yang **tidak ada**
+sebagai "pakai default, `pending`", sementara filter dulu **menghapus** param itu
+saat dikosongkan — jadi memilih "All statuses" langsung kembali ke `pending`.
+Sekarang `apply` menulis `?status=` untuk kasus itu: tidak ada berarti "default",
+ada tapi kosong berarti "semua". API sudah membaca param kosong sebagai tanpa
+filter, jadi yang salah hanya penulis di sisi page.
+
+## Yang dipotong, dan apa selanjutnya
+
+- **Tidak ada test komponen.** React Testing Library tidak dipasang. Risiko yang
+  dinilai ada di uang dan transaksinya, dan ke situ waktunya dialokasikan;
+  halamannya diverifikasi dengan menjalankannya di browser sungguhan —
+  meng-approve sebuah baris, memastikan baris `earnings` dan Remaining Budget-nya
+  tepat, lalu memeriksa pesan 409/422.
+- **`count(*)` eksak di setiap listing**, dan itu hal pertama yang akan melambat
+  jauh di atas 50.000 baris. Peningkatannya: estimasi murah dari
+  `pg_class.reltuples` untuk hitungan tanpa filter, atau melepas total eksak dan
+  memakai cursor keyset tanpa offset (`where (submitted_at, id) < (?, ?)`), yang
+  sudah disiapkan oleh urutan `submitted_at desc, id desc`.
+- **Offset yang dalam.** `offset 40000` tetap menyusuri 40.000 entri index.
+  Solusinya sama: pagination keyset. Cukup untuk 2.500 halaman queue admin, tidak
+  cukup untuk API publik.
+- **Tanpa autentikasi.** Hanya ada satu aktor di irisan ini dan soal tidak
+  memintanya, jadi setiap request dipercaya sebagai admin.
+- **Halaman untuk endpoint summary.** B3 baru berupa JSON; belum ada bagian UI
+  yang memakainya.
+- **Reject tanpa alasan.** Skemanya tidak punya tempat untuk menyimpannya
+  ([ADR-0005](docs/adr/0005-rejection-is-the-other-half-of-a-review.md)).
+- **Tanpa review massal.** Satu baris sekali jalan; queue 50.000 baris pada
+  akhirnya menginginkan "approve semua yang cocok dengan filter ini", yang
+  merupakan transaksi lain dan cerita konfirmasi yang lain juga.

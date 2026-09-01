@@ -34,7 +34,7 @@ export async function listSubmissions(params: ListParams): Promise<SubmissionLis
   const where = and(
     params.status ? eq(submissions.status, params.status) : undefined,
     params.campaignId ? eq(submissions.campaignId, params.campaignId) : undefined,
-    q ? sql`lower(${creators.username}) like ${likePrefix(q)}` : undefined,
+    q ? sql`lower(${creators.username}) like ${likeContains(q)}` : undefined,
   )
 
   // The count query only joins creators when the search needs it; the page
@@ -69,11 +69,14 @@ export async function listSubmissions(params: ListParams): Promise<SubmissionLis
 }
 
 /**
- * Prefix-only, so `creators (lower(username) text_pattern_ops)` can serve it.
- * A leading `%` would force a full scan on every keystroke — if infix search is
- * wanted the answer is pg_trgm, not a slower LIKE. See the README.
+ * Substring match: `creator_12` finds `bestcreator_123` too. A leading `%`
+ * cannot use a b-tree, so the index behind this is a pg_trgm GIN index on
+ * `lower(username)` — see migrations/0002.
+ *
+ * The user's own `%`, `_` and `\` are escaped, so searching for `%` matches
+ * nothing rather than everything.
  */
-function likePrefix(value: string): string {
+function likeContains(value: string): string {
   const escaped = value.replace(/[\\%_]/g, (character) => `\\${character}`)
-  return `${escaped}%`
+  return `%${escaped}%`
 }

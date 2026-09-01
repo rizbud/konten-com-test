@@ -10,8 +10,10 @@ export default function ReviewError({ reset }: { error: Error; reset: () => void
     <main className="mx-auto w-full max-w-6xl px-6 py-10">
       <h1 className="text-2xl font-semibold tracking-tight">Review submissions</h1>
       <div className="mt-6 rounded-lg border border-red-200 p-8 text-center dark:border-red-900">
-        <p className="font-medium text-red-600">Could not load submissions.</p>
-        <p className="mt-1 text-sm text-zinc-500">
+        <p className="font-medium text-red-700 dark:text-red-400">
+          Could not load submissions.
+        </p>
+        <p className="mt-1 text-sm text-zinc-600 dark:text-zinc-400">
           The database did not answer. Nothing was approved.
         </p>
         <button

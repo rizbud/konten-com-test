@@ -1,3 +1,8 @@
+/**
+ * Locale and time zone are pinned so a server render and a client re-render
+ * produce byte-identical strings — an unpinned time zone hydrates differently
+ * on an admin sitting outside Jakarta.
+ */
 const number = new Intl.NumberFormat('id-ID')
 const dateTime = new Intl.DateTimeFormat('id-ID', {
   dateStyle: 'medium',

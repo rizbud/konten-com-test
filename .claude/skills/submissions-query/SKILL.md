@@ -17,10 +17,12 @@ description: Query and pagination rules for the ClipPay submissions list and cam
 - No N+1: join `creators` and `campaigns` in the same statement, select only the
   columns the table renders (username, campaign title, platform, views, status,
   submitted_at).
-- Username search: `ilike` with a trailing wildcard (`creator_1%`) so a
-  `creators (username text_pattern_ops)` index can serve it. A leading `%`
-  forces a full scan — if prefix search is not enough, say so and use
-  `pg_trgm`, don't silently ship the slow version.
+- Username search is a **substring** match — `%creator_1%`, so a fragment from
+  the middle of a username finds it. A leading `%` cannot use a b-tree, so the
+  index behind it is `creators using gin (lower(username) gin_trgm_ops)`
+  (`pg_trgm`), and the predicate must be written `lower(username) like ?` to
+  match that expression — `ilike` cannot use it. Escape the user's own `%`, `_`
+  and `\` so a search for `%` matches nothing rather than everything.
 - Deterministic order: `submitted_at desc, id desc`. Without the tiebreak,
   pages overlap.
 - Indexes you add: state them in the README with the query they serve. A

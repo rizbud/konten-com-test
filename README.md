@@ -14,6 +14,7 @@ before writing code in [docs/adr/](docs/adr/), and the build order in
 docker compose up -d
 psql "postgresql://clippay:clippay@localhost:5433/clippay" -f schema.sql
 psql "postgresql://clippay:clippay@localhost:5433/clippay" -f migrations/0001_indexes.sql
+psql "postgresql://clippay:clippay@localhost:5433/clippay" -f migrations/0002_username_trigram.sql
 ```
 
 `.env` needs one line:
@@ -25,7 +26,7 @@ DATABASE_URL=postgresql://clippay:clippay@localhost:5433/clippay
 ```bash
 npm install
 npm run dev     # http://localhost:3000/review
-npm test        # 38 tests, needs the database up
+npm test        # 44 tests, needs the database up
 npm run lint
 npm run build
 ```
@@ -45,10 +46,23 @@ docker compose exec -T db psql -U clippay -d clippay -f - < schema.sql
 | `GET /api/campaigns/:id/summary` | bonus B3, one round trip |
 | `/review` | server-rendered table, URL filter state, per-row approve |
 
-Source map: money in [`src/lib/money.ts`](src/lib/money.ts), the approve
-transaction in [`src/lib/submissions/approve.ts`](src/lib/submissions/approve.ts),
-the listing query in [`src/lib/submissions/list.ts`](src/lib/submissions/list.ts),
-the page in [`src/app/review/`](src/app/review/).
+### Where things live
+
+```
+src/app/                 routes only — a page, three route handlers, one error boundary
+src/components/ui.tsx    shared presentational pieces and the colour tokens
+src/components/pagination.tsx
+src/components/review/   the review screen's own components
+src/db/                  drizzle model of the given schema, and the pool
+src/lib/                 money, formatting, page windows, and the query modules
+src/test/                fixtures for the behaviour tests
+```
+
+Nothing under `src/app/` holds logic beyond reading its own inputs: routes
+validate and delegate, the page fetches and composes. The money is in
+[`src/lib/money.ts`](src/lib/money.ts), the approve transaction in
+[`src/lib/submissions/approve.ts`](src/lib/submissions/approve.ts), the listing
+query in [`src/lib/submissions/list.ts`](src/lib/submissions/list.ts).
 
 ## The money
 
@@ -143,40 +157,41 @@ dependency.
 
 ### Indexes
 
-In [`migrations/0001_indexes.sql`](migrations/0001_indexes.sql), applied by hand.
-`drizzle-kit` is deliberately not installed — the tables in `schema.sql` are
-given, and a generated migration would try to recreate them. Indexes are the
-only DDL this project adds, so they stay as reviewable SQL.
+In [`migrations/`](migrations/), applied by hand. `drizzle-kit` is deliberately
+not installed — the tables in `schema.sql` are given, and a generated migration
+would try to recreate them. Indexes are the only DDL this project adds, so they
+stay as reviewable SQL.
 
 | Index | Query it serves |
 |---|---|
 | `submissions (status, submitted_at desc, id desc)` | the default listing. `EXPLAIN` shows an index scan feeding the LIMIT with **no sort node** — the index supplies both the filter and the order |
 | `submissions (campaign_id, status, submitted_at desc, id desc)` | the same listing with a campaign filter. `campaign_id` leads because it is the more selective column (8 campaigns vs 3 statuses) |
 | `earnings (submission_id)` unique | the second double-pay guard, not a read path |
-| `creators (lower(username) text_pattern_ops)` | creator prefix search |
+| `creators using gin (lower(username) gin_trgm_ops)` | creator substring search |
 
 Dropped: the seed's `submissions (status)` and `submissions (campaign_id)`. Both
 are leading-column prefixes of the composites above, so they only cost write
-throughput now.
+throughput now. `submissions (submitted_at desc)` was left alone; it serves an
+unfiltered listing, which is not a path this app takes.
 
-Honest note on the last one: at 2 000 creators the planner prefers a sequential
-scan of that tiny table, so the index does not fire today —
-`set enable_seqscan = off` confirms it is used and that the prefix range is
-extracted correctly. It is in because creators is the table that grows without
-bound. `submissions (submitted_at desc)` from the seed was left alone; it serves
-an unfiltered listing, which is not a path this app takes.
+### Username search is a substring match
 
-### Username search is prefix-only
-
-`lower(username) like 'creator_1%'`, with `%`, `_` and `\` in the user's input
+`lower(username) like '%creator_1%'`, with `%`, `_` and `\` in the user's input
 escaped so a search for `%` matches nothing instead of everything (there is a
-test for that). Prefix-only is what makes it indexable: a leading `%` cannot use
-a b-tree at all and would sequentially scan `creators` on every keystroke.
+test for that). A fragment from the middle of a name finds it: `eator_195` and
+the suffix `r_1999` both return rows.
 
-`ilike` would have read better but cannot use a `text_pattern_ops` index —
-`lower()` on both sides is what makes the index applicable. If infix search is
-actually wanted, the answer is a `pg_trgm` GIN index on `lower(username)`, not a
-slower LIKE pretending to be fast.
+That leading `%` is exactly what a b-tree cannot serve — there is no prefix to
+seek on — so this needs `pg_trgm`
+([`migrations/0002`](migrations/0002_username_trigram.sql)): a GIN index over the
+three-character shingles of `lower(username)`. `EXPLAIN ANALYZE` on
+`like '%tor_123%'` is a bitmap index scan on `creators_username_trgm_idx`,
+0.2 ms, 3 heap blocks. The b-tree `text_pattern_ops` index this replaced could
+only ever have served a prefix, and the planner never chose it even for that —
+2 000 creators fit in 51 pages, so a sequential scan won.
+
+`ilike` reads better but cannot use the index: the indexed expression is
+`lower(username)`, so the predicate has to be written the same way.
 
 ## Bonus B2 — views fall after an approval
 
@@ -242,13 +257,36 @@ A server component reads `searchParams`, applies its own `status=pending`
 default, and calls `listSubmissions` directly. Filter state lives in the URL, so
 it survives a reload and can be pasted to someone else.
 
-Two client components, both only for interactivity:
+**Both side effects are owned by the list, not by the widget that triggers
+them.** This is deliberate and is the shape worth reviewing:
 
-- **Filters** — selects and a search box that `router.push` the new URL inside a
-  transition, so `isPending` can say "Updating…" while the server re-renders.
-- **Approve** — posts to the real endpoint, disabled in flight, a distinct
-  message per status code, and `router.refresh()` on success (and on a 409,
-  where the table is by definition stale).
+- [`ReviewFilters`](src/components/review/review-filters.tsx) owns one `apply`
+  function. It is the only code that knows what a filter change means — which
+  params it touches, that it clears the offset, and that it happens inside a
+  transition so `isPending` can say "Updating…". The status `<select>` and the
+  [`CampaignPicker`](src/components/review/campaign-picker.tsx) below it are
+  inputs that report a value and nothing else.
+- [`SubmissionsTable`](src/components/review/submissions-table.tsx) owns the
+  approve call for every row in it: the endpoint, reading its response, and what
+  each status code means. [`SubmissionRow`](src/components/review/submission-row.tsx)
+  is presentational — it reports an id and renders one of four states it was
+  handed. It does not know approving is HTTP.
+
+No custom hooks. Each of those is one piece of state and one function used in one
+place; a `useApprovals`/`useFilters` wrapper would move the same lines behind a
+name and buy nothing. They earn their keep at the second caller, not the first.
+
+Pagination is numbered — first, last, and the current page with a neighbour
+either side, gaps in between, which
+[`pageWindow`](src/lib/pagination.ts) computes and a test pins (including the
+case where a gap would stand in for a single page, and never emitting a page
+twice). They are plain `<Link>`s, so paging needs no client JavaScript and every
+page is a real bookmarkable URL.
+
+The campaign filter is a typeahead rather than a `<select>`, because a native
+select cannot be typed into and eight campaigns is only eight today. It is a
+plain filtered listbox — click, or Enter for the first match, Escape to close —
+not a combobox library.
 
 The four states: loading is a `Suspense` skeleton keyed on the query string, so
 it reappears on every filter change; empty distinguishes "nothing matches" from
@@ -256,7 +294,22 @@ it reappears on every filter change; empty distinguishes "nothing matches" from
 server-side; and `error.tsx` catches a database that does not answer, saying
 plainly that nothing was approved.
 
-CSS was the last priority — the brief does not grade it.
+Colour is centralised in [`src/components/ui.tsx`](src/components/ui.tsx) so a
+contrast fix happens once. Muted text is `zinc-600` / `zinc-400` rather than
+`zinc-500`, which read as grey-on-grey against *both* backgrounds. Every text
+node on the page was measured against its real computed background in the
+browser: the lowest ratio is now 5.36:1 (white on `emerald-700`, the Approve
+button) in both themes, against the 4.5:1 minimum. The only deliberate exception
+is a disabled Previous/Next, which has to read as unavailable.
+
+### One bug this refactor exposed
+
+"All statuses" did not work. The page treats an absent `status` as "use the
+default, `pending`", and the filter used to *delete* the param when cleared — so
+picking "All statuses" snapped straight back to pending. `apply` now writes
+`?status=` for that case: absent means "default", present-but-empty means "all".
+The API already read a blank param as no filter, so only the page's writer was
+wrong.
 
 ## Cut for time, and what comes next
 

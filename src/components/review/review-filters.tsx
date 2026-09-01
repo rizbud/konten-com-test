@@ -5,15 +5,19 @@ import { useTransition } from 'react'
 
 import { SUBMISSION_STATUSES } from '@/db/schema'
 
-type CampaignOption = { id: number; title: string }
+import { BUTTON, CONTROL, Field, MUTED } from '../ui'
+import { CampaignPicker, type CampaignOption } from './campaign-picker'
 
 /**
- * The only reason this is a client component: filter changes are navigations,
- * and `useTransition` gives the table an "updating" state while the server
- * re-renders. Filter state itself lives in the URL, so it survives a reload and
- * is shareable.
+ * Every filter change goes through `apply` here — the controls below are dumb
+ * inputs that report a value. One place decides what a filter change means:
+ * which params it touches, that it resets the offset, and that it happens
+ * inside a transition so the table can say it is updating.
+ *
+ * State lives in the URL, not in this component, so a filtered view survives a
+ * reload and can be pasted to someone else.
  */
-export function Filters({ campaigns }: { campaigns: CampaignOption[] }) {
+export function ReviewFilters({ campaigns }: { campaigns: CampaignOption[] }) {
   const router = useRouter()
   const searchParams = useSearchParams()
   const [isPending, startTransition] = useTransition()
@@ -21,13 +25,18 @@ export function Filters({ campaigns }: { campaigns: CampaignOption[] }) {
   function apply(changes: Record<string, string>) {
     const next = new URLSearchParams(searchParams)
     for (const [key, value] of Object.entries(changes)) {
-      if (value) next.set(key, value)
+      // `status` is kept even when empty, because the page treats an *absent*
+      // status as "use the default, pending". Deleting it would make picking
+      // "All statuses" silently snap back to pending; `?status=` means all.
+      if (value || key === 'status') next.set(key, value)
       else next.delete(key)
     }
     // Any filter change invalidates the current offset.
     next.delete('page')
     startTransition(() => router.push(`/review?${next}`))
   }
+
+  const campaignId = searchParams.get('campaignId')
 
   return (
     <form
@@ -42,7 +51,7 @@ export function Filters({ campaigns }: { campaigns: CampaignOption[] }) {
       <Field label="Status">
         <select
           name="status"
-          className={SELECT}
+          className={CONTROL}
           defaultValue={searchParams.get('status') ?? 'pending'}
           onChange={(event) => apply({ status: event.target.value })}
         >
@@ -56,56 +65,30 @@ export function Filters({ campaigns }: { campaigns: CampaignOption[] }) {
       </Field>
 
       <Field label="Campaign">
-        <select
-          name="campaignId"
-          className={SELECT}
-          defaultValue={searchParams.get('campaignId') ?? ''}
-          onChange={(event) => apply({ campaignId: event.target.value })}
-        >
-          <option value="">All campaigns</option>
-          {campaigns.map((campaign) => (
-            <option key={campaign.id} value={campaign.id}>
-              {campaign.title}
-            </option>
-          ))}
-        </select>
+        <CampaignPicker
+          campaigns={campaigns}
+          value={campaignId ? Number(campaignId) : null}
+          onChange={(id) => apply({ campaignId: id === null ? '' : String(id) })}
+        />
       </Field>
 
       <Field label="Creator username">
         <input
           type="search"
           name="q"
-          className={SELECT}
+          className={CONTROL}
           placeholder="creator_12"
           defaultValue={searchParams.get('q') ?? ''}
         />
       </Field>
 
-      <button
-        type="submit"
-        className="h-9 rounded-md bg-zinc-900 px-4 text-sm font-medium text-white hover:bg-zinc-700 dark:bg-zinc-100 dark:text-zinc-900 dark:hover:bg-zinc-300"
-      >
+      <button type="submit" className={BUTTON}>
         Search
       </button>
 
-      <span
-        role="status"
-        className="h-9 self-end text-sm leading-9 text-zinc-500 tabular-nums"
-      >
+      <span role="status" className={`h-9 self-end text-sm leading-9 ${MUTED}`}>
         {isPending ? 'Updating…' : ''}
       </span>
     </form>
-  )
-}
-
-const SELECT =
-  'h-9 rounded-md border border-zinc-300 bg-white px-2 text-sm dark:border-zinc-700 dark:bg-zinc-900'
-
-function Field({ label, children }: { label: string; children: React.ReactNode }) {
-  return (
-    <label className="flex flex-col gap-1 text-xs font-medium text-zinc-500">
-      {label}
-      {children}
-    </label>
   )
 }

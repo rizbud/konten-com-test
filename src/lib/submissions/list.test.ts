@@ -75,11 +75,15 @@ describe('listSubmissions', () => {
     expect(rows[0].submittedAt).toBeInstanceOf(Date)
   })
 
-  it('searches creator usernames by prefix', async () => {
+  it('searches creator usernames anywhere in the name, not just the start', async () => {
     const { username, campaignId } = await sixPending()
 
-    const hit = await listSubmissions({ page: 1, per: 20, q: username.slice(0, 10) })
-    expect(hit.rows.filter((r) => r.campaignId === campaignId).length).toBeGreaterThan(0)
+    const byPrefix = await listSubmissions({ page: 1, per: 20, q: username.slice(0, 10) })
+    expect(byPrefix.rows.some((row) => row.campaignId === campaignId)).toBe(true)
+
+    // The distinguishing case: a fragment from the middle of the username.
+    const byMiddle = await listSubmissions({ page: 1, per: 20, q: username.slice(4, 12) })
+    expect(byMiddle.rows.some((row) => row.campaignId === campaignId)).toBe(true)
 
     const miss = await listSubmissions({ page: 1, per: 20, q: `zz${username}` })
     expect(miss.total).toBe(0)

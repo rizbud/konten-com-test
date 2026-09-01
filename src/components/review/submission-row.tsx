@@ -3,6 +3,7 @@ import type { SubmissionRow as Submission } from '@/lib/submissions/list'
 
 import {
   APPROVE_BUTTON,
+  CampaignStatusBadge,
   CLICKABLE,
   MUTED,
   REJECT_BUTTON,
@@ -56,6 +57,9 @@ export function SubmissionRow({
           {submission.campaignTitle}
         </button>
         <div className={`text-xs ${MUTED}`}>{submission.campaignBrand}</div>
+      </Td>
+      <Td>
+        <CampaignStatusBadge status={submission.campaignStatus} />
       </Td>
       <Td className={`capitalize ${MUTED}`}>{submission.platform}</Td>
       <Td className="text-right tabular-nums">{formatNumber(submission.views)}</Td>

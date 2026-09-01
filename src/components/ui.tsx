@@ -48,28 +48,47 @@ export function Panel({ children }: { children: ReactNode }) {
 }
 
 export function Th({ children, className = '' }: { children: ReactNode; className?: string }) {
-  return <th className={`px-4 py-2.5 font-medium ${className}`}>{children}</th>
+  return <th className={`px-3 py-2 font-medium ${className}`}>{children}</th>
 }
 
 export function Td({ children, className = '' }: { children: ReactNode; className?: string }) {
-  return <td className={`px-4 py-2.5 ${className}`}>{children}</td>
+  return <td className={`px-3 py-2 ${className}`}>{children}</td>
 }
 
-export function StatusBadge({ status }: { status: string }) {
-  const tone =
-    status === 'approved'
-      ? 'bg-emerald-100 text-emerald-900 dark:bg-emerald-900 dark:text-emerald-100'
-      : status === 'rejected'
-        ? 'bg-red-100 text-red-900 dark:bg-red-900 dark:text-red-100'
-        : 'bg-amber-100 text-amber-900 dark:bg-amber-800 dark:text-amber-50'
+const TONES = {
+  positive: 'bg-emerald-100 text-emerald-900 dark:bg-emerald-900 dark:text-emerald-100',
+  warning: 'bg-amber-100 text-amber-900 dark:bg-amber-800 dark:text-amber-50',
+  negative: 'bg-red-100 text-red-900 dark:bg-red-900 dark:text-red-100',
+  neutral: 'bg-zinc-200 text-zinc-800 dark:bg-zinc-700 dark:text-zinc-100',
+} as const
 
+function Badge({ tone, children }: { tone: keyof typeof TONES; children: ReactNode }) {
   return (
     <span
-      className={`rounded-full px-2 py-0.5 text-xs font-semibold uppercase tracking-wide ${tone}`}
+      className={`whitespace-nowrap rounded-full px-2 py-0.5 text-xs font-semibold uppercase tracking-wide ${TONES[tone]}`}
     >
-      {status}
+      {children}
     </span>
   )
+}
+
+/** Submission status: pending waits on an admin, the other two are settled. */
+export function StatusBadge({ status }: { status: string }) {
+  const tone =
+    status === 'approved' ? 'positive' : status === 'rejected' ? 'negative' : 'warning'
+  return <Badge tone={tone}>{status}</Badge>
+}
+
+/**
+ * Campaign status. Note the deliberate absence of alarm on paused/closed: they
+ * still approve, because budget is the only gate (ADR-0001). This is context an
+ * admin should see, not a warning that the row cannot be paid — that is what the
+ * remaining budget column is for.
+ */
+export function CampaignStatusBadge({ status }: { status: string }) {
+  const tone =
+    status === 'active' ? 'positive' : status === 'paused' ? 'warning' : 'neutral'
+  return <Badge tone={tone}>{status}</Badge>
 }
 
 /**

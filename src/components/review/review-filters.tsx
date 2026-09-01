@@ -8,9 +8,14 @@ import { capitalize } from '@/lib/format'
 
 import { BUTTON, CONTROL, Field, MUTED } from '../ui'
 import { CampaignPicker, type CampaignOption } from './campaign-picker'
-import { CreatorPicker } from './creator-picker'
+import { CreatorPicker, type CreatorFilter } from './creator-picker'
 
-type Draft = { status: string; campaignId: string; q: string }
+type Draft = {
+  status: string
+  campaignId: string
+  /** The creator box: free text, plus the name if one was picked from it. */
+  creator: CreatorFilter
+}
 
 /**
  * Nothing is filtered until Apply. Every control edits a local draft, and one
@@ -32,11 +37,16 @@ export function ReviewFilters({ campaigns }: { campaigns: CampaignOption[] }) {
   const searchParams = useSearchParams()
   const [isPending, startTransition] = useTransition()
 
-  const [draft, setDraft] = useState<Draft>(() => ({
-    status: searchParams.get('status') ?? 'pending',
-    campaignId: searchParams.get('campaignId') ?? '',
-    q: searchParams.get('q') ?? '',
-  }))
+  const [draft, setDraft] = useState<Draft>(() => {
+    const exact = searchParams.get('creator')
+    return {
+      status: searchParams.get('status') ?? 'pending',
+      campaignId: searchParams.get('campaignId') ?? '',
+      // An exact creator round-trips through the URL as its username, so the box
+      // shows what is filtered without having to look the name up again.
+      creator: { query: exact ?? searchParams.get('q') ?? '', exact },
+    }
+  })
 
   const edit = (changes: Partial<Draft>) =>
     setDraft((current) => ({ ...current, ...changes }))
@@ -49,7 +59,12 @@ export function ReviewFilters({ campaigns }: { campaigns: CampaignOption[] }) {
     // statuses" snap back to pending; `?status=` means all of them.
     next.set('status', draft.status)
     setOrDelete(next, 'campaignId', draft.campaignId)
-    setOrDelete(next, 'q', draft.q.trim())
+
+    // Either one creator exactly, or a substring of a username — never both.
+    // Picking a name from the suggestions replaces the search with that person.
+    const { query, exact } = draft.creator
+    setOrDelete(next, 'creator', exact ?? '')
+    setOrDelete(next, 'q', exact ? '' : query.trim())
     // Any filter change invalidates the current offset.
     next.delete('page')
 
@@ -89,8 +104,11 @@ export function ReviewFilters({ campaigns }: { campaigns: CampaignOption[] }) {
         />
       </Field>
 
-      <Field label="Creator username">
-        <CreatorPicker value={draft.q} onChange={(q) => edit({ q })} />
+      <Field label={draft.creator.exact ? 'Creator (exact)' : 'Creator username'}>
+        <CreatorPicker
+          value={draft.creator}
+          onChange={(creator) => edit({ creator })}
+        />
       </Field>
 
       <button type="submit" className={BUTTON}>

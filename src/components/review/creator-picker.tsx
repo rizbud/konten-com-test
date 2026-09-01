@@ -10,24 +10,33 @@ type Match = { id: number; username: string }
 const MIN_QUERY = 2
 const DEBOUNCE_MS = 250
 
+export type CreatorFilter = {
+  /** What is typed in the box. */
+  query: string
+  /** Set only when a suggestion was chosen, and cleared as soon as it is edited. */
+  exact: string | null
+}
+
 /**
  * Suggests creators from the database as you type, five at a time — typing more
  * narrows it rather than scrolling 2 000 names.
  *
- * The value is still free text: the suggestions are a convenience, and a partial
- * username applies as a substring search whether or not one is picked. So this
- * owns *its own* options (a read of /api/creators, debounced and abortable) and
- * nothing about what the filter means — that stays in ReviewFilters.
+ * Choosing one means *that* creator: it reports an `exact` username alongside
+ * the text, and the caller filters on it instead of the substring. Typing again
+ * clears it, because the text no longer names anybody in particular. Without
+ * that, picking `creator_190` would still return `creator_1909`'s submissions.
  *
- * Fetching here rather than in a hook: one caller, and a `useRemoteOptions`
- * wrapper would move the same lines behind a name.
+ * It owns its own options (a debounced, abortable read of /api/creators) and
+ * nothing about what the filter means — that stays in ReviewFilters. Fetching
+ * here rather than in a hook: one caller, and a `useRemoteOptions` wrapper would
+ * move the same lines behind a name.
  */
 export function CreatorPicker({
   value,
   onChange,
 }: {
-  value: string
-  onChange: (username: string) => void
+  value: CreatorFilter
+  onChange: (next: CreatorFilter) => void
 }) {
   const listboxId = useId()
   const [open, setOpen] = useState(false)
@@ -39,10 +48,15 @@ export function CreatorPicker({
    */
   const [result, setResult] = useState<{ query: string; matches: Match[] } | null>(null)
 
-  const needle = value.trim()
+  const needle = value.query.trim()
   const active = open && needle.length >= MIN_QUERY
   const matches = result?.query === needle ? result.matches : []
   const loading = active && result?.query !== needle
+
+  function pick(username: string) {
+    onChange({ query: username, exact: username })
+    setOpen(false)
+  }
 
   useEffect(() => {
     if (!active) return
@@ -86,10 +100,11 @@ export function CreatorPicker({
         aria-autocomplete="list"
         className={`${CONTROL} w-56`}
         placeholder="creator_12"
-        value={value}
+        value={value.query}
         onChange={(event) => {
           setOpen(true)
-          onChange(event.target.value)
+          // Editing the text unpicks whoever was chosen.
+          onChange({ query: event.target.value, exact: null })
         }}
         onFocus={() => setOpen(true)}
         onKeyDown={(event) => {
@@ -97,8 +112,7 @@ export function CreatorPicker({
           if (event.key === 'Enter' && matches.length > 0) {
             // Enter would otherwise submit the form with the partial text.
             event.preventDefault()
-            onChange(matches[0].username)
-            setOpen(false)
+            pick(matches[0].username)
           }
         }}
       />
@@ -108,11 +122,8 @@ export function CreatorPicker({
           {matches.map((match) => (
             <PopupOption
               key={match.id}
-              selected={match.username === needle}
-              onSelect={() => {
-                onChange(match.username)
-                setOpen(false)
-              }}
+              selected={match.username === value.exact}
+              onSelect={() => pick(match.username)}
             >
               {match.username}
             </PopupOption>

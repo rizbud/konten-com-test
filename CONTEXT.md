@@ -51,8 +51,8 @@ The current view count on a submission. Not stable over time — platforms remov
 fake views, so it can fall.
 
 **Review**:
-The admin's decision on a pending submission. Only approval is built here;
-rejection exists in the data but has no action behind it.
+The admin's decision on a pending submission. It has two outcomes, Approval and
+Rejection, and a submission can only receive one.
 
 **Approval**:
 The act that turns a pending submission into a paid one. Produces exactly one
@@ -89,6 +89,11 @@ _Avoid_: commission, service charge
 What the creator ends up with after the platform fee.
 _Avoid_: net amount, take-home, bersih
 
+**Rejection**:
+The act that closes a pending submission without paying it. Produces no earning
+and consumes no budget.
+_Avoid_: decline, deny, tolak
+
 **Zero Earning**:
 A submission whose views are too low to be worth even one rupiah. Not
-approvable.
+approvable, only rejectable.

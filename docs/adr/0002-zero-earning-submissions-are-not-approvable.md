@@ -9,5 +9,12 @@ submission stays pending.
 
 This is a rule the brief did not ask for, chosen because "approve" means "pay"
 and there is nothing to pay. It keeps every approval this system makes paired
-with exactly one earning. The cost is that it strands the affected submissions:
-rejection is not built in this slice, so nothing clears them from the queue.
+with exactly one earning.
+
+## Update — rejection now clears them
+
+The original cost of this rule was that it stranded the affected submissions:
+rejection was not built, so nothing could clear them from the queue. Rejection
+is now built ([ADR-0005](0005-rejection-is-the-other-half-of-a-review.md)), so a
+zero-earning submission has a way out. The rule itself is unchanged: approval
+still refuses to pay nothing.

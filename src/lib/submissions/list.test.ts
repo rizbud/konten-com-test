@@ -76,7 +76,7 @@ describe('listSubmissions', () => {
   })
 
   it('searches creator usernames by prefix', async () => {
-    const { username, campaignId } = await sixPending();
+    const { username, campaignId } = await sixPending()
 
     const hit = await listSubmissions({ page: 1, per: 20, q: username.slice(0, 10) })
     expect(hit.rows.filter((r) => r.campaignId === campaignId).length).toBeGreaterThan(0)

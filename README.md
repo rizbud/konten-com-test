@@ -332,13 +332,24 @@ memberi komponen itu sebuah key dari query string: sebuah navigasi me-mount ulan
 komponennya sehingga draft-nya sama dengan yang tampil, tanpa effect yang
 menyinkronkan dua sumber kebenaran.
 
-Pagination-nya bernomor — halaman pertama, terakhir, dan halaman aktif dengan
-satu tetangga di kiri-kanan, dengan celah di antaranya, yang dihitung
-[`pageWindow`](src/lib/pagination.ts) dan dikunci oleh test (termasuk kasus di
-mana sebuah celah hanya akan menyembunyikan satu halaman, dan bahwa satu halaman
-tidak pernah muncul dua kali). Semuanya `<Link>` biasa, jadi berpindah halaman
-tidak butuh JavaScript di klien dan setiap halaman adalah URL nyata yang bisa
-di-bookmark.
+Pagination-nya bernomor, dibatasi **lima nomor halaman** — selalu ada halaman
+pertama dan terakhir, selalu ada halaman aktif, dan jendelanya bergeser supaya
+tetap di dalam batas: lebar barisnya sama di halaman 1 maupun halaman 2.500.
+
+```
+halaman 1     dari 2500 -> [1] 2 3 4 … 2500
+halaman 4     dari 2500 -> 1 … 3 [4] 5 … 2500
+halaman 2499  dari 2500 -> 1 … 2497 2498 [2499] 2500
+```
+
+[`pageWindow`](src/lib/pagination.ts) yang menghitungnya, dan test mengunci
+ketiga bentuk itu beserta invariannya: tidak pernah lebih dari lima nomor,
+pertama/terakhir/aktif selalu ada, terurut, tanpa duplikat, dan nomor halaman di
+luar rentang dijepit ke rentangnya. Konsekuensi dari batas itu: sebuah celah bisa
+menyembunyikan satu halaman saja (`1 2 3 4 … 6` untuk enam halaman) — menuliskan
+halaman itu memang lebih ramah, tapi barisnya jadi enam nomor, dan batas itulah
+yang jadi tujuannya. Semuanya `<Link>` biasa, jadi berpindah halaman tidak butuh
+JavaScript di klien dan setiap halaman adalah URL nyata yang bisa di-bookmark.
 
 Dua filter yang menyebut nama sesuatu memakai typeahead, bukan `<select>`, karena
 select bawaan browser tidak bisa diketik. Keduanya bukan library combobox —
@@ -420,10 +431,13 @@ keduanya melakukan hal yang berlawanan, dan setiap tombol membawa
 `cursor-pointer` — reset Tailwind memberi tombol `cursor: default`, yang terbaca
 "tidak bisa diklik".
 
-Tabelnya juga menampilkan **Remaining Budget setiap campaign dengan Total
-Budget-nya di bawah**, karena itulah angka yang menentukan sebuah approve berhasil
-atau tidak; melihatnya langsung di baris berarti tidak perlu membuka dialog hanya
-untuk tahu kenapa sebuah approve ditolak.
+Tabelnya juga menampilkan dua angka yang sebenarnya menentukan keputusan approve,
+bersebelahan: **jumlah yang akan dibayar** (Net Earning untuk creator, dengan
+Gross Earning yang keluar dari budget di bawahnya) dan **Remaining Budget
+campaign dengan Total Budget-nya di bawah**. Keduanya berasal dari
+`calculateEarning` yang sama dengan yang dipakai transaksinya, jadi barisnya tidak
+mungkin berbeda dari pembayarannya, dan penolakan karena budget tidak cukup sudah
+kelihatan di baris sebelum tombolnya ditekan.
 
 ### Satu bug yang tersingkap oleh refactor ini
 

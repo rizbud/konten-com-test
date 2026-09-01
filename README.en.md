@@ -315,12 +315,23 @@ together costs one round trip instead of two and half-typed input never queries
 key derived from the query string — a navigation remounts it and the draft
 matches what is on screen, instead of an effect syncing two sources of truth.
 
-Pagination is numbered — first, last, and the current page with a neighbour
-either side, gaps in between, which
-[`pageWindow`](src/lib/pagination.ts) computes and a test pins (including the
-case where a gap would stand in for a single page, and never emitting a page
-twice). They are plain `<Link>`s, so paging needs no client JavaScript and every
-page is a real bookmarkable URL.
+Pagination is numbered, capped at **five page numbers** — always the first and
+the last, always the current one, and the window slides to stay inside the ends
+so the row keeps a fixed width at page 1 and at page 2 500:
+
+```
+page 1     of 2500 -> [1] 2 3 4 … 2500
+page 4     of 2500 -> 1 … 3 [4] 5 … 2500
+page 2499  of 2500 -> 1 … 2497 2498 [2499] 2500
+```
+
+[`pageWindow`](src/lib/pagination.ts) computes it and a test pins all three
+shapes plus the invariants: never more than five numbers, first/last/current
+always present, sorted, no repeats, and a page number past the end clamped. The
+cap does mean a gap can hide a single page (`1 2 3 4 … 6` on six pages) — naming
+that page instead would be friendlier but would make the row six numbers wide,
+and the cap is the point. They are plain `<Link>`s, so paging needs no client
+JavaScript and every page is a real bookmarkable URL.
 
 Both filters that name a thing are typeaheads rather than `<select>`s, because a
 native select cannot be typed into. Neither is a combobox library — a plain
@@ -395,9 +406,12 @@ platform is `Capitalised`, Approve is green and Reject is red because they do
 opposite things, and every button carries `cursor-pointer` — Tailwind's reset
 gives buttons `cursor: default`, which reads as "not clickable".
 
-The table also carries each campaign's **remaining budget with its total
-underneath**, which is the number that decides whether an approve will succeed;
-seeing it in the row means not opening a dialog to find out why one was refused.
+The table also carries the two numbers an approve decision actually turns on,
+side by side: **amount to pay** (net to the creator, with the gross that leaves
+the budget underneath) and the campaign's **remaining budget with its total
+underneath**. Both come from the same `calculateEarning` the transaction uses, so
+the row cannot disagree with the payment, and a refusal for insufficient budget
+is visible in the row before the button is pressed.
 
 ### One bug this refactor exposed
 

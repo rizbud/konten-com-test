@@ -46,7 +46,7 @@ npm run build
 | `POST /api/submissions/:id/approve` | the money path: one transaction, budget guard, no double pay |
 | `POST /api/submissions/:id/reject` | the other half of a review — no money, same 409 guard |
 | `GET /api/creators` | typeahead source for the creator filter, capped at 5 |
-| `GET /api/campaigns/:id/summary` | bonus B3, one round trip |
+| `GET /api/campaigns/:id/summary` | bonus B3: one round trip, two scans |
 | `/review` | server-rendered table, URL filter state, per-row approve and reject behind a confirmation, detail dialog |
 
 ### Where things live
@@ -150,12 +150,32 @@ No money moves, so there is no transaction to open: one conditional
 its own, with the same guard the approve path uses. Ten concurrent rejects of one
 submission produce exactly one success and nine 409s.
 
-Because both actions carry that condition, they cannot both land: an approved
-submission cannot be rejected out from under its earning, a rejected one cannot
-later be paid, and racing an approve against a reject leaves exactly one winner
-with the row always agreeing with the books —
-[`reject.test.ts`](src/lib/submissions/reject.test.ts) asserts that, including
-the race.
+### Two admins, one approving and one rejecting
+
+They share one guard, so no extra rule is needed. Both statements carry
+`where id = ? and status = 'pending'`, and Postgres row locks order them:
+
+1. Whichever reaches the row first holds its lock.
+2. The second **waits** — it does not fail, and it does not overwrite.
+3. When the first finishes, the second re-evaluates its condition against the
+   new row version (`READ COMMITTED`). The status is no longer `pending`, so zero
+   rows update and it returns 409 without touching the budget.
+
+The two differ in how long they hold that lock. Approve holds it for its whole
+transaction — reading the CPM, decrementing the budget, inserting the earning —
+so a waiting reject only hears back once the approve commits. Reject is a single
+statement and releases immediately.
+
+One case is easy to miss, and has a test: if approve wins the lock but then
+**rolls back** — insufficient budget, or a zero earning — the row is still
+pending, and the reject that was waiting then succeeds. That is the behaviour we
+want; an approval that cannot pay should not lock a submission out of being
+cleared. [`reject.test.ts`](src/lib/submissions/reject.test.ts) asserts that
+case, and re-runs the general race five times so an ordering fluke cannot pass
+silently.
+
+An approved submission therefore cannot be rejected out from under its earning,
+and a rejected one cannot later be paid.
 
 Rejection carries no reason code; the schema has nowhere to put one. First thing
 to add if an admin needs to explain a decision.
@@ -199,6 +219,7 @@ stays reviewable SQL while drizzle keeps track of what has been applied.
 | `submissions (campaign_id, status, submitted_at desc, id desc)` | the same listing with a campaign filter. `campaign_id` leads because it is the more selective column (8 campaigns vs 3 statuses) |
 | `submissions (creator_id, status, submitted_at desc, id desc)` | the listing for one creator. `schema.sql` ships no index on `creator_id` at all, so this was a sequential scan of 50 000 rows to find ~25 |
 | `earnings (submission_id)` unique | the second double-pay guard, not a read path |
+| `earnings (campaign_id) include (gross_amount, net_amount, fee_amount)` | the money aggregates in the campaign summary, answered without touching the heap |
 | `creators using gin (lower(username) gin_trgm_ops)` | creator substring search |
 
 Dropped: the seed's `submissions (status)` and `submissions (campaign_id)`. Both
@@ -248,6 +269,34 @@ only ever have served a prefix, and the planner never chose it even for that —
 
 `ilike` reads better but cannot use the index: the indexed expression is
 `lower(username)`, so the predicate has to be written the same way.
+
+## Bonus B3 — the campaign summary
+
+Submission count, approved count, pending count, gross/net/fee paid, and the
+remaining budget, in one round trip.
+
+The obvious shape is one correlated scalar subquery per number. That is **six
+scans**, because a scalar subquery may only return one column. `LEFT JOIN
+LATERAL` lets each side return three, so `count(*) filter (where …)` answers all
+three submission counts from a single index-only scan, and three `sum()`s come
+out of one pass over `earnings`. Measured with `EXPLAIN (ANALYZE, BUFFERS)` on a
+campaign holding 6 147 submissions:
+
+| | scans | buffers |
+|---|---|---|
+| six scalar subqueries | 6 | 238 |
+| two lateral aggregates | 2 | **113** |
+
+Still lateral rather than a plain join, for the reason the subqueries were not
+one join either: joining `submissions` to `earnings` and then aggregating counts
+each submission once per earning row.
+
+`schema.sql` indexes nothing on `earnings.campaign_id`, so the money side was a
+sequential scan — harmless against the handful of rows this system has written,
+and the wrong shape once `earnings` grows with every approval. The index added
+for it carries the amounts in its `INCLUDE`, so the sums never touch the heap.
+The planner will not pick it at this table size; it is there for the size that
+comes later, and that is stated rather than hidden.
 
 ## Bonus B2 — views fall after an approval
 

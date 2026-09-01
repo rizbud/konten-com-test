@@ -72,7 +72,9 @@ digunakan karena tabel awal sudah disediakan oleh `schema.sql`.
 - **B1:** Test untuk fungsi perhitungan uang.
 - **B2:** Jawaban tentang penurunan jumlah views setelah approval, tersedia di
   bagian [Jawaban B2](#jawaban-b2--views-turun-setelah-approval).
-- **B3:** `GET /api/campaigns/:id/summary` untuk ringkasan campaign.
+- **B3:** `GET /api/campaigns/:id/summary` untuk ringkasan campaign, dikerjakan
+  dalam satu query dengan dua kali scan. Rinciannya di
+  [bagian 5](#5-ringkasan-campaign-dikerjakan-dalam-satu-query).
 - `GET /api/creators` sebagai sumber saran username creator pada filter.
 
 ## Keputusan Teknis
@@ -117,6 +119,29 @@ Perilaku endpoint:
 - `409` jika submission sudah direview.
 - `422` jika earning bernilai nol atau budget tidak mencukupi.
 
+Reject menggunakan kondisi yang sama, yaitu `status = 'pending'`, sehingga kedua
+aksi berbagi satu mekanisme penjagaan. Apabila dua admin menekan Approve dan
+Reject pada waktu yang bersamaan, urutan keduanya ditentukan oleh row lock
+Postgres:
+
+1. Request yang lebih dahulu sampai memegang lock pada baris tersebut.
+2. Request kedua menunggu, bukan gagal dan bukan menimpa.
+3. Setelah request pertama selesai, request kedua mengevaluasi ulang kondisinya
+   terhadap versi baris terbaru. Status sudah bukan `pending`, sehingga tidak ada
+   baris yang berubah dan responsnya `409`. Budget tidak tersentuh.
+
+Perbedaan keduanya terletak pada lama penguncian. Approve memegang lock selama
+seluruh transaksi berlangsung, yaitu sampai pembacaan CPM, pengurangan budget,
+dan pencatatan earning selesai. Reject hanya satu statement, sehingga lock-nya
+segera dilepas.
+
+Terdapat satu kasus yang perlu dicatat. Apabila approve memenangkan lock namun
+kemudian dibatalkan karena budget tidak cukup atau earning bernilai nol, baris
+tersebut kembali berstatus `pending` dan reject yang sedang menunggu akan
+berhasil. Perilaku ini memang diinginkan, karena approval yang gagal membayar
+tidak seharusnya mengunci submission. Kasus tersebut diuji di
+[`reject.test.ts`](src/lib/submissions/reject.test.ts).
+
 ### 3. Listing dilakukan di sisi database
 
 Pagination menggunakan `LIMIT` dan `OFFSET` di database. Data campaign dan
@@ -142,12 +167,49 @@ mudah ditinjau:
 | `submissions (campaign_id, status, submitted_at DESC, id DESC)` | Listing berdasarkan campaign |
 | `submissions (creator_id, status, submitted_at DESC, id DESC)` | Listing berdasarkan creator |
 | Unique `earnings (submission_id)` | Perlindungan tambahan terhadap pembayaran ganda |
+| `earnings (campaign_id)` dengan `INCLUDE` nominal | Agregasi uang pada ringkasan campaign |
 | GIN pada `lower(creators.username)` | Pencarian username substring |
 
 Index tunggal pada `status` dan `campaign_id` dari seed tidak dipertahankan
 karena kolom tersebut sudah menjadi awalan index komposit yang digunakan query.
 
-### 5. Pemisahan server component dan client component
+### 5. Ringkasan campaign dikerjakan dalam satu query
+
+`GET /api/campaigns/:id/summary` mengembalikan jumlah submission, jumlah
+approved, jumlah pending, total earning yang sudah dibayar, dan sisa budget.
+
+Bentuk yang paling sederhana adalah satu correlated scalar subquery untuk setiap
+angka. Cara tersebut menghasilkan enam kali scan, karena scalar subquery hanya
+dapat mengembalikan satu kolom. Dengan `LEFT JOIN LATERAL`, setiap sisi dapat
+mengembalikan tiga kolom sekaligus, sehingga `count(*) FILTER` menghitung ketiga
+angka submission dalam satu index only scan dan tiga `sum()` dihitung dalam satu
+kali scan tabel `earnings`.
+
+Hasil pengukuran `EXPLAIN (ANALYZE, BUFFERS)` pada campaign dengan 6.147
+submission:
+
+| Bentuk query | Jumlah scan | Buffer |
+| --- | --- | --- |
+| Enam scalar subquery | 6 | 238 |
+| Dua lateral aggregate | 2 | 113 |
+
+Lateral tetap digunakan dan bukan join biasa, karena join langsung antara
+`submissions` dan `earnings` akan menghitung satu submission berulang kali
+sebanyak jumlah baris earning-nya.
+
+Tabel `earnings` tidak memiliki index pada `campaign_id`, sehingga agregasinya
+masih berupa sequential scan. Index
+`earnings (campaign_id) INCLUDE (gross_amount, net_amount, fee_amount)`
+ditambahkan untuk kebutuhan tersebut. Nominal ikut disimpan dalam index sehingga
+`sum()` dapat dijawab tanpa membaca heap. Dengan jumlah earning yang masih
+sedikit, planner belum memilih index ini. Index tersebut disiapkan untuk kondisi
+ketika tabel earning bertambah seiring setiap approval.
+
+Nilai `grossPaid` tidak akan sama dengan `totalBudget - remainingBudget` pada
+campaign hasil seed, karena data `approved` bawaan seed tidak memiliki earning
+dan tidak mengurangi budget.
+
+### 6. Pemisahan server component dan client component
 
 Halaman `/review` mengambil data melalui modul query yang sama dengan route
 handler API. Hal ini menghindari request HTTP ke server sendiri dan memastikan
@@ -204,3 +266,5 @@ memerlukan perubahan skema dan keputusan produk di luar cakupan take-home ini.
 - Reject belum memiliki alasan karena skema yang disediakan tidak menyediakan
   kolom untuk menyimpannya.
 - Belum ada review massal dan belum ada halaman UI khusus untuk endpoint summary.
+- Dokumentasi versi bahasa Inggris yang lebih rinci tersedia di
+  [README.en.md](README.en.md).

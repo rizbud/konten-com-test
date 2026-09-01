@@ -23,6 +23,13 @@ export const CLICKABLE = 'cursor-pointer disabled:cursor-not-allowed'
 
 export const BUTTON = `h-9 rounded-md bg-zinc-900 px-4 text-sm font-medium text-white hover:bg-zinc-700 dark:bg-zinc-100 dark:text-zinc-900 dark:hover:bg-zinc-300 ${CLICKABLE}`
 
+const ACTION = `shrink-0 rounded-md px-3 text-sm font-medium disabled:opacity-60 ${CLICKABLE}`
+
+/** The two review outcomes, coloured by what they do: pay, or close unpaid. */
+export const APPROVE_BUTTON = `${ACTION} bg-emerald-700 text-white hover:bg-emerald-600`
+export const REJECT_BUTTON = `${ACTION} bg-red-700 text-white hover:bg-red-600`
+export const QUIET_BUTTON = `${ACTION} border border-zinc-300 hover:bg-zinc-100 dark:border-zinc-600 dark:hover:bg-zinc-800`
+
 export function Field({ label, children }: { label: string; children: ReactNode }) {
   return (
     <label className={`flex flex-col gap-1 text-xs font-medium ${MUTED}`}>

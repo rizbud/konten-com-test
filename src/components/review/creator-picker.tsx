@@ -122,7 +122,7 @@ export function CreatorPicker({
             <PopupNote>{loading ? 'Searching…' : 'No creator matches.'}</PopupNote>
           ) : (
             <PopupNote>
-              <span className={MUTED}>Top 5 — type more to narrow it.</span>
+              <span className={MUTED}>Showing the first 5 matches. Type more to narrow.</span>
             </PopupNote>
           )}
         </Popup>

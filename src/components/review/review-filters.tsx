@@ -4,6 +4,7 @@ import { useRouter, useSearchParams } from 'next/navigation'
 import { useState, useTransition } from 'react'
 
 import { SUBMISSION_STATUSES } from '@/db/schema'
+import { capitalize } from '@/lib/format'
 
 import { BUTTON, CONTROL, Field, MUTED } from '../ui'
 import { CampaignPicker, type CampaignOption } from './campaign-picker'
@@ -74,7 +75,7 @@ export function ReviewFilters({ campaigns }: { campaigns: CampaignOption[] }) {
           <option value="">All statuses</option>
           {SUBMISSION_STATUSES.map((status) => (
             <option key={status} value={status}>
-              {status}
+              {capitalize(status)}
             </option>
           ))}
         </select>

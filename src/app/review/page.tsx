@@ -2,6 +2,7 @@ import { asc } from 'drizzle-orm'
 import { Suspense } from 'react'
 
 import { Pagination } from '@/components/pagination'
+import { CampaignSummaryPanel } from '@/components/review/campaign-summary-panel'
 import { ReviewFilters } from '@/components/review/review-filters'
 import { SubmissionsTable } from '@/components/review/submissions-table'
 import { DANGER, MUTED, Panel } from '@/components/ui'
@@ -40,10 +41,24 @@ export default async function ReviewPage({ searchParams }: PageProps<'/review'>)
       </div>
 
       {parsed.ok ? (
-        // Keyed on the query so every filter change shows the skeleton again.
-        <Suspense key={query.toString()} fallback={<Skeleton per={parsed.params.per} />}>
-          <Results params={parsed.params} query={query} />
-        </Suspense>
+        <>
+          {/* Its own boundary, so the summary's two aggregates never hold up the
+              table. Only meaningful for one campaign at a time — B3 is a
+              per-campaign endpoint, not an all-campaigns roll-up. */}
+          {parsed.params.campaignId ? (
+            <Suspense
+              key={`summary-${parsed.params.campaignId}`}
+              fallback={<SummarySkeleton />}
+            >
+              <CampaignSummaryPanel campaignId={parsed.params.campaignId} />
+            </Suspense>
+          ) : null}
+
+          {/* Keyed on the query so every filter change shows the skeleton again. */}
+          <Suspense key={query.toString()} fallback={<Skeleton per={parsed.params.per} />}>
+            <Results params={parsed.params} query={query} />
+          </Suspense>
+        </>
       ) : (
         <Panel>
           <p className={`font-medium ${DANGER}`}>That filter combination is not valid.</p>
@@ -92,6 +107,17 @@ async function Results({
         basePath="/review"
       />
     </>
+  )
+}
+
+function SummarySkeleton() {
+  return (
+    <div
+      className="mt-6 h-36 animate-pulse rounded-lg border border-zinc-200 bg-zinc-100 dark:border-zinc-800 dark:bg-zinc-900"
+      aria-busy="true"
+    >
+      <span className="sr-only">Loading campaign summary…</span>
+    </div>
   )
 }
 

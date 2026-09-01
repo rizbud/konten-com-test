@@ -65,7 +65,7 @@ default (the page supplies `pending` itself).
 `src/lib/submissions/list.ts` — `listSubmissions(params)`: joined select plus
 `count(*)` under `Promise.all`, one shared where-clause built against the joined
 shape so the count carries the `creators` join when search is active. Order
-`submitted_at desc, id desc`. Prefix-only username search with `_` and `%`
+`submitted_at desc, id desc`. Substring username search with `_` and `%`
 escaped.
 
 ## 6. `GET /api/submissions`
@@ -97,7 +97,7 @@ No campaign-status condition — [ADR-0001](docs/adr/0001-budget-is-the-only-app
 - gross == remaining_budget succeeds; gross == remaining + 1 gives 422 and leaves
   the submission pending and the budget untouched
 - zero-earning submission is refused and stays pending
-- list: pagination boundaries, filter combinations, prefix search, 400 paths
+- list: pagination boundaries, filter combinations, substring search, 400 paths
 
 Widest scope of the options considered. If time runs short the list tests are the
 cut — concurrency and money are not.
@@ -119,7 +119,7 @@ error render on the server.
 
 Run instructions · every decision with its *why*, pointing at the ADRs rather
 than repeating them · each index and the query it serves · the bigint ceiling ·
-the prefix-search limitation and `pg_trgm` as the upgrade · the B2 views-decay
+the substring search and the `pg_trgm` index behind it · the B2 views-decay
 answer · what was cut and what comes next.
 
 ## 11. Final pass

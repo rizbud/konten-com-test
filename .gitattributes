@@ -1,0 +1,2 @@
+# One line ending in the repo, so a Windows checkout does not rewrite files.
+* text=auto eol=lf

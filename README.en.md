@@ -46,14 +46,14 @@ npm run build
 | `POST /api/submissions/:id/reject` | the other half of a review — no money, same 409 guard |
 | `GET /api/creators` | typeahead source for the creator filter, capped at 5 |
 | `GET /api/campaigns/:id/summary` | bonus B3, one round trip |
-| `/review` | server-rendered table, URL filter state, per-row approve and reject |
+| `/review` | server-rendered table, URL filter state, per-row approve and reject behind a confirmation, detail dialog |
 
 ### Where things live
 
 ```
 src/app/                 routes only — a page, five route handlers, one error boundary
 src/components/ui.tsx    shared presentational pieces and the colour tokens
-src/components/pagination.tsx
+src/components/modal.tsx, toasts.tsx, pagination.tsx
 src/components/review/   the review screen's own components
 src/db/                  drizzle model of the given schema, and the pool
 src/lib/                 money, formatting, page windows, and the query modules
@@ -297,11 +297,12 @@ them.** This is deliberate and is the shape worth reviewing:
   [`CampaignPicker`](src/components/review/campaign-picker.tsx) and the
   [`CreatorPicker`](src/components/review/creator-picker.tsx) are inputs that
   report a value and nothing else.
-- [`SubmissionsTable`](src/components/review/submissions-table.tsx) owns the
-  review call for every row in it: both endpoints, reading their responses, and
-  what each status code means. [`SubmissionRow`](src/components/review/submission-row.tsx)
-  is presentational — it reports an id and an action, and renders one of four
-  states it was handed. It does not know reviewing is HTTP.
+- [`SubmissionsTable`](src/components/review/submissions-table.tsx) owns
+  everything a review touches: the confirmation, both endpoints, reading their
+  responses, what each status code means, and the toast that reports the
+  outcome. [`SubmissionRow`](src/components/review/submission-row.tsx) is
+  presentational — it reports an id and an action, and renders the state it was
+  handed. It does not know reviewing is HTTP, or that a dialog opens first.
 
 No custom hooks. Each of those is one piece of state and one function used in one
 place; a `useReviews`/`useFilters` wrapper would move the same lines behind a
@@ -334,6 +335,45 @@ filtered listbox: click, Enter for the first match, Escape to close.
   displayed. The value stays free text: a partial username applies as a substring
   search whether or not a suggestion was picked.
 
+### Confirming, and saying what happened
+
+Both actions are irreversible and one of them moves money, so neither fires on a
+single click. The confirmation states the amount before it moves — for an
+approve: who gets paid, how much net, the gross coming off which campaign, and
+what the remaining budget will be afterwards; for a reject: that nothing is paid
+and that a review happens once.
+
+The numbers in it come from [`calculateEarning`](src/lib/money.ts) — the same
+pure function the server uses, so the preview cannot drift from the payment. It
+is still only a preview: the amount actually written is computed inside the
+transaction from the views the row holds when it is locked.
+
+`window.confirm` would have been one line, and was the first thing considered.
+It cannot lay out an amount legibly, and it blocks the event loop while it is up.
+[`Modal`](src/components/modal.tsx) wraps the native `<dialog>` instead, which
+brings the focus trap, the backdrop, the top layer and Escape-to-close with it —
+no library, and nothing reimplemented.
+
+Outcomes are [toasts](src/components/toasts.tsx), not text crammed into the
+row's action cell: success is green and names the amount paid, failure is red and
+carries the endpoint's own message, so "already reviewed" still reads differently
+from "not enough remaining budget". A failed row goes back to idle with its
+buttons live, because most failures are worth retrying. The row keeps its own
+terminal state ("Paid Rp…", "Rejected") so it is obvious *which* row succeeded.
+
+### Detail dialog
+
+Every row has a Details button, and the campaign title opens the same thing. It
+covers the submission (id, creator, platform, video link, views, status, both
+timestamps), its campaign (brand, status, CPM, total and remaining budget), and
+what approving would pay right now — including a line explaining, where it
+applies, that the views round down to zero rupiah or that the budget will not
+cover the gross.
+
+It needs no endpoint and has no loading state: the campaign columns ride along on
+a join the listing already does. A per-row fetch on open would have been an N+1
+waiting to be written.
+
 The four states: loading is a `Suspense` skeleton keyed on the query string, so
 it reappears on every filter change; empty distinguishes "nothing matches" from
 "this page is past the end"; invalid filters render the validation errors
@@ -349,9 +389,15 @@ button) in both themes, against the 4.5:1 minimum. The only deliberate exception
 is a disabled Previous/Next, which has to read as unavailable.
 
 Smaller things in the same file so they are consistent by construction: status
-renders `UPPERCASE` and platform `Capitalised`, and every button carries
-`cursor-pointer` — Tailwind's reset gives buttons `cursor: default`, which reads
-as "not clickable".
+renders `UPPERCASE` in the table and `Capitalised` in the filter (`<option>`
+ignores `text-transform` in some browsers, so that label is capitalised in JS),
+platform is `Capitalised`, Approve is green and Reject is red because they do
+opposite things, and every button carries `cursor-pointer` — Tailwind's reset
+gives buttons `cursor: default`, which reads as "not clickable".
+
+The table also carries each campaign's **remaining budget with its total
+underneath**, which is the number that decides whether an approve will succeed;
+seeing it in the row means not opening a dialog to find out why one was refused.
 
 ### One bug this refactor exposed
 

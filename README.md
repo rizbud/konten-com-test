@@ -48,14 +48,14 @@ npm run build
 | `POST /api/submissions/:id/reject` | separuh lainnya dari sebuah Review — tanpa uang, penjaga 409 yang sama |
 | `GET /api/creators` | sumber typeahead untuk filter creator, dibatasi 5 |
 | `GET /api/campaigns/:id/summary` | bonus B3, satu kali jalan ke database |
-| `/review` | tabel yang di-render di server, state filter di URL, approve dan reject per baris |
+| `/review` | tabel yang di-render di server, state filter di URL, approve dan reject per baris di belakang konfirmasi, dialog detail |
 
 ### Di mana semuanya
 
 ```
 src/app/                 hanya route — satu page, lima route handler, satu error boundary
 src/components/ui.tsx    komponen presentasional bersama dan token warna
-src/components/pagination.tsx
+src/components/modal.tsx, toasts.tsx, pagination.tsx
 src/components/review/   komponen milik halaman review
 src/db/                  model drizzle atas skema yang diberikan, dan pool-nya
 src/lib/                 uang, format, jendela halaman, dan modul query
@@ -312,11 +312,12 @@ disengaja dan inilah bentuk yang paling layak di-review:
   [`CreatorPicker`](src/components/review/creator-picker.tsx) adalah input yang
   melaporkan nilai, tidak lebih.
 - [`SubmissionsTable`](src/components/review/submissions-table.tsx) memiliki
-  pemanggilan review untuk setiap baris di dalamnya: kedua endpoint, cara membaca
-  responsnya, dan arti setiap status code.
+  semua yang disentuh sebuah review: konfirmasinya, kedua endpoint, cara membaca
+  responsnya, arti setiap status code, dan toast yang melaporkan hasilnya.
   [`SubmissionRow`](src/components/review/submission-row.tsx) presentasional — ia
-  melaporkan sebuah id dan sebuah aksi, lalu merender salah satu dari empat state
-  yang diberikan kepadanya. Ia tidak tahu bahwa review itu HTTP.
+  melaporkan sebuah id dan sebuah aksi, lalu merender state yang diberikan
+  kepadanya. Ia tidak tahu bahwa review itu HTTP, atau bahwa ada dialog yang
+  terbuka lebih dulu.
 
 Tidak ada custom hook. Masing-masing di atas adalah satu potong state dan satu
 fungsi yang dipakai di satu tempat; pembungkus `useReviews`/`useFilters` hanya
@@ -354,6 +355,48 @@ menutup.
   tetap teks bebas: username sepotong tetap berlaku sebagai pencarian substring,
   dipilih dari saran atau tidak.
 
+### Konfirmasi, dan mengabarkan hasilnya
+
+Kedua aksi tidak bisa dibatalkan dan salah satunya memindahkan uang, jadi tidak
+ada yang langsung jalan dari satu klik. Konfirmasinya menyebutkan nominalnya
+sebelum nominal itu berpindah — untuk approve: siapa yang dibayar, berapa
+Net Earning-nya, Gross Earning yang dipotong dari campaign mana, dan berapa
+Remaining Budget-nya setelah itu; untuk reject: bahwa tidak ada yang dibayar dan
+bahwa sebuah Review hanya terjadi sekali.
+
+Angka di dalamnya berasal dari [`calculateEarning`](src/lib/money.ts) — fungsi
+murni yang sama yang dipakai server, jadi pratinjau dan pembayaran tidak bisa
+berbeda. Tetap hanya pratinjau: nominal yang benar-benar ditulis dihitung di
+dalam transaksi, dari views yang dipegang baris itu saat di-lock.
+
+`window.confirm` cuma satu baris, dan itu yang pertama dipertimbangkan. Ia tidak
+bisa menata nominal supaya terbaca, dan ia membekukan event loop selama muncul.
+Sebagai gantinya [`Modal`](src/components/modal.tsx) membungkus `<dialog>` bawaan
+browser, yang sudah membawa focus trap, backdrop, top layer, dan
+Escape-untuk-menutup — tanpa library, tanpa mengimplementasikan ulang apa pun.
+
+Hasilnya disampaikan lewat [toast](src/components/toasts.tsx), bukan teks yang
+dijejalkan ke kolom aksi: sukses berwarna hijau dan menyebutkan nominal yang
+dibayar, gagal berwarna merah dan membawa pesan dari endpoint-nya sendiri —
+sehingga "sudah di-review" tetap terbaca berbeda dari "Remaining Budget tidak
+cukup". Baris yang gagal kembali ke keadaan semula dengan tombolnya aktif, karena
+sebagian besar kegagalan memang layak dicoba ulang. Baris tetap menyimpan
+keadaan akhirnya sendiri ("Paid Rp…", "Rejected") supaya jelas baris **mana** yang
+berhasil.
+
+### Dialog detail
+
+Setiap baris punya tombol Details, dan judul campaign membuka hal yang sama.
+Isinya: submission-nya (id, creator, platform, tautan video, views, status, kedua
+timestamp), campaign-nya (brand, status, CPM, Total Budget dan Remaining Budget),
+dan berapa yang akan dibayar kalau di-approve sekarang — termasuk satu baris
+penjelasan, bila relevan, bahwa views-nya membulat ke nol rupiah atau bahwa
+budget-nya tidak akan menutup Gross Earning.
+
+Tidak butuh endpoint dan tidak punya state loading: kolom campaign-nya menumpang
+join yang sudah dilakukan query listing. Fetch per baris saat dialog dibuka akan
+menjadi N+1 yang menunggu untuk ditulis.
+
 Empat state-nya: loading berupa skeleton `Suspense` yang di-key pada query
 string, jadi ia muncul lagi setiap kali filter berubah; kosong membedakan "tidak
 ada yang cocok" dari "halaman ini sudah melewati baris terakhir"; filter tidak
@@ -370,9 +413,17 @@ kedua tema, terhadap minimum 4,5:1. Satu-satunya pengecualian yang disengaja
 adalah Previous/Next yang sedang mati, yang memang harus terbaca tidak tersedia.
 
 Hal-hal kecil di file yang sama supaya konsisten dengan sendirinya: status
-dirender `HURUF BESAR` dan platform `Huruf depan besar`, dan setiap tombol
-membawa `cursor-pointer` — reset Tailwind memberi tombol `cursor: default`, yang
-terbaca "tidak bisa diklik".
+dirender `HURUF BESAR` di tabel dan `Huruf depan besar` di filter (`<option>`
+mengabaikan `text-transform` di sebagian browser, jadi label itu dikapitalkan di
+JS), platform `Huruf depan besar`, Approve hijau dan Reject merah karena
+keduanya melakukan hal yang berlawanan, dan setiap tombol membawa
+`cursor-pointer` — reset Tailwind memberi tombol `cursor: default`, yang terbaca
+"tidak bisa diklik".
+
+Tabelnya juga menampilkan **Remaining Budget setiap campaign dengan Total
+Budget-nya di bawah**, karena itulah angka yang menentukan sebuah approve berhasil
+atau tidak; melihatnya langsung di baris berarti tidak perlu membuka dialog hanya
+untuk tahu kenapa sebuah approve ditolak.
 
 ### Satu bug yang tersingkap oleh refactor ini
 

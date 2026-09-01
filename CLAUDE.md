@@ -4,6 +4,9 @@ Build the **review & approve** slice of a platform that pays creators per video
 view. Full brief: [SOAL.md](SOAL.md) (Indonesian). It is real money in the real
 product — correctness beats feature count.
 
+Domain language: [CONTEXT.md](CONTEXT.md). Decisions already made:
+[docs/adr/](docs/adr/) — read those before re-arguing one.
+
 ## Scope
 
 1. `GET /api/submissions` — pagination, filter by `status` and `campaignId`,
@@ -20,13 +23,22 @@ Bonus (optional, only if the required part is clean): money-calc tests,
 
 ## Stack
 
-Next.js App Router + TypeScript · Drizzle ORM (`drizzle-orm/node-postgres`) ·
-PostgreSQL · Tailwind · Vitest + React Testing Library.
+Next.js 16 App Router (React 19) + TypeScript · Drizzle ORM
+(`drizzle-orm/node-postgres`) · PostgreSQL · Tailwind v4 · Vitest + React
+Testing Library.
+
+Next 16 differs from what you remember — read the relevant guide under
+`node_modules/next/dist/docs/01-app/` before writing app code, per
+[AGENTS.md](AGENTS.md).
+
+Code lives in `src/`, imported as `@/*`. Route handlers in
+`src/app/api/**/route.ts`, the page in `src/app/review/page.tsx`, DB in
+`src/db/`.
 
 Server components for data fetching, client components only for interactivity.
 Drizzle is used against the **existing** `schema.sql` — model it in
-`db/schema.ts` and do not generate migrations that recreate those tables. New
-indexes go in a separate small SQL migration file so they are reviewable.
+`src/db/schema.ts` and do not generate migrations that recreate those tables.
+New indexes go in a separate small SQL migration file so they are reviewable.
 
 ## Setup
 
@@ -35,11 +47,15 @@ docker compose up -d
 psql "postgresql://clippay:clippay@localhost:5433/clippay" -f schema.sql
 ```
 
-`DATABASE_URL=postgresql://clippay:clippay@localhost:5433/clippay`
+`DATABASE_URL=postgresql://clippay:clippay@localhost:5433/clippay` in `.env`.
+
+Scaffolded by `create-next-app`; Drizzle, `pg`, and Vitest are not installed
+yet — add them when the first code needs them, and add the `test` script then.
 
 ```bash
 npm run dev
 npm test
+npm run lint
 ```
 
 ## Conventions

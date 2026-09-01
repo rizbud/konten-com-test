@@ -39,7 +39,7 @@ npm run build
 
 | | |
 |---|---|
-| `GET /api/submissions` | pagination, filter `status` / `campaignId`, pencarian username creator, total baris eksak |
+| `GET /api/submissions` | pagination, filter `status` / `campaignId` / `creator`, pencarian username, total baris eksak |
 | `POST /api/submissions/:id/approve` | jalur uang: satu transaksi, penjaga budget, tanpa pembayaran dobel |
 | `POST /api/submissions/:id/reject` | separuh lain dari sebuah Review — tanpa uang, penjaga yang sama |
 | `GET /api/creators` | sumber typeahead filter creator, dibatasi 5 |
@@ -128,7 +128,7 @@ Urutannya `submitted_at desc, id desc`. Pemecah seri itu bukan hiasan:
 
 Query param divalidasi di batas route; input tidak valid → **400 dengan semua
 masalahnya sekaligus**, bukan 500 dari driver. Validasinya ditulis tangan, bukan
-zod: lima parameter tidak sebanding dengan satu dependency baru.
+zod: enam parameter tidak sebanding dengan satu dependency baru.
 
 ### 5. Index yang ditambahkan
 
@@ -141,6 +141,7 @@ tabel yang sudah diberikan `schema.sql`.
 |---|---|
 | `submissions (status, submitted_at desc, id desc)` | listing default. `EXPLAIN` menunjukkan index scan langsung ke LIMIT, **tanpa sort** |
 | `submissions (campaign_id, status, submitted_at desc, id desc)` | listing dengan filter campaign; `campaign_id` di depan karena lebih selektif |
+| `submissions (creator_id, status, submitted_at desc, id desc)` | listing untuk satu creator. `schema.sql` sama sekali tidak punya index di `creator_id` |
 | `earnings (submission_id)` unique | penjaga pembayaran dobel kedua |
 | `creators using gin (lower(username) gin_trgm_ops)` | pencarian substring username |
 
@@ -148,7 +149,23 @@ Dua index dari seed dibuang — `submissions (status)` dan
 `submissions (campaign_id)` — karena keduanya prefiks kolom depan dari komposit di
 atas, jadi sekarang hanya membebani kecepatan tulis.
 
-Pencarian username adalah **substring** (`lower(username) like '%creator_1%'`),
+Filter creator punya **dua mode**, dan itu disengaja:
+
+- **`creator=creator_190`** — cocok persis pada satu username, lewat unique index
+  `creators_username_key`. Ini yang dikirim begitu sebuah nama dipilih dari
+  daftar saran. Yang dipakai username, bukan id, supaya URL-nya tetap terbaca dan
+  kotak filternya bisa menampilkan siapa yang sedang difilter langsung dari URL —
+  dengan id, nama itu harus diambil ulang setiap kali halaman dimuat.
+- **`q=creator_190`** — pencarian substring, untuk saat belum ada nama yang
+  dipilih.
+
+Pembedaannya penting: `q=creator_190` juga cocok dengan `creator_1900` sampai
+`creator_1909`, jadi memilih satu creator dari daftar tetapi memfilter dengan `q`
+akan mengembalikan 278 baris milik 11 creator, bukan 16 baris milik satu orang.
+Mengetik lagi setelah memilih akan membatalkan pilihannya, karena teksnya sudah
+tidak lagi menyebut satu orang tertentu.
+
+Pencarian substring-nya sendiri ditulis `lower(username) like '%creator_1%'`,
 dengan `%`, `_`, `\` dari input pengguna di-escape supaya mencari `%` tidak cocok
 semuanya. `%` di depan tidak bisa dilayani b-tree, jadi index-nya `pg_trgm`; hasil
 `EXPLAIN ANALYZE`-nya bitmap index scan, 0,2 ms. `ilike` lebih enak dibaca tapi

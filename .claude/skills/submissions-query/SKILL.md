@@ -17,6 +17,13 @@ description: Query and pagination rules for the ClipPay submissions list and cam
 - No N+1: join `creators` and `campaigns` in the same statement, select only the
   columns the table renders (username, campaign title, platform, views, status,
   submitted_at).
+- Two creator filters, and they are not interchangeable. `creator=<username>` is
+  an equality match on `creators.username` (unique index) and is what the
+  typeahead sends once a name is picked; it needs
+  `submissions (creator_id, status, submitted_at desc, id desc)`, because
+  `schema.sql` indexes nothing on `creator_id`. Never answer "show me this
+  creator" with the substring filter — `creator_190` also matches
+  `creator_1909`.
 - Username search is a **substring** match — `%creator_1%`, so a fragment from
   the middle of a username finds it. A leading `%` cannot use a b-tree, so the
   index behind it is `creators using gin (lower(username) gin_trgm_ops)`

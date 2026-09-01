@@ -42,7 +42,7 @@ npm run build
 
 | | |
 |---|---|
-| `GET /api/submissions` | pagination, `status` / `campaignId` filters, creator username search, exact total |
+| `GET /api/submissions` | pagination, `status` / `campaignId` / `creator` filters, username search, exact total |
 | `POST /api/submissions/:id/approve` | the money path: one transaction, budget guard, no double pay |
 | `POST /api/submissions/:id/reject` | the other half of a review — no money, same 409 guard |
 | `GET /api/creators` | typeahead source for the creator filter, capped at 5 |
@@ -177,7 +177,7 @@ in one 400, so a client fixing a URL sees both mistakes at once. `status` has no
 default in the API — the `/review` page applies `pending` itself, which keeps the
 endpoint a faithful view of the table.
 
-Validation is hand-written rather than zod: five parameters did not justify a
+Validation is hand-written rather than zod: six parameters did not justify a
 dependency.
 
 ### Indexes
@@ -197,6 +197,7 @@ stays reviewable SQL while drizzle keeps track of what has been applied.
 |---|---|
 | `submissions (status, submitted_at desc, id desc)` | the default listing. `EXPLAIN` shows an index scan feeding the LIMIT with **no sort node** — the index supplies both the filter and the order |
 | `submissions (campaign_id, status, submitted_at desc, id desc)` | the same listing with a campaign filter. `campaign_id` leads because it is the more selective column (8 campaigns vs 3 statuses) |
+| `submissions (creator_id, status, submitted_at desc, id desc)` | the listing for one creator. `schema.sql` ships no index on `creator_id` at all, so this was a sequential scan of 50 000 rows to find ~25 |
 | `earnings (submission_id)` unique | the second double-pay guard, not a read path |
 | `creators using gin (lower(username) gin_trgm_ops)` | creator substring search |
 
@@ -204,6 +205,30 @@ Dropped: the seed's `submissions (status)` and `submissions (campaign_id)`. Both
 are leading-column prefixes of the composites above, so they only cost write
 throughput now. `submissions (submitted_at desc)` was left alone; it serves an
 unfiltered listing, which is not a path this app takes.
+
+### Two creator filters: one exact, one a search
+
+`creator=creator_190` matches **one** username exactly, on the unique index
+`schema.sql` already provides. It is what the typeahead sends the moment a name
+is chosen from its suggestions, and typing again clears it — the text no longer
+names anybody in particular.
+
+The username rather than the id, deliberately: the URL stays readable and
+shareable, and the filter box can show who is filtered straight from it. With an
+id it would have to fetch the name back on every page load just to fill its own
+input.
+
+The distinction is not cosmetic. `q=creator_190` is a substring, so it also
+matches `creator_1900` through `creator_1909`: on the seeded data that is **278
+rows across 11 creators**, where `creator=creator_190` is **16 rows for one
+person**. Picking a name from a list and still getting ten other people's
+submissions is the bug this closes.
+
+`EXPLAIN ANALYZE` on the exact path: an index scan on `creators_username_key` for
+the one creator, feeding an index-only scan on
+`submissions_creator_status_submitted_at_id_idx` with zero heap fetches, 0.13 ms.
+The small sort that remains is 30 rows — the ordering cannot stream out of the
+index when `creator_id` arrives from a join.
 
 ### Username search is a substring match
 
